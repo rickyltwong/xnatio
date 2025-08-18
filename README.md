@@ -1,6 +1,8 @@
 # XNAT IO
 
-XNAT command-line utilities for uploading archives and downloading sessions.
+CLI utilities for interacting with CAMH XNAT instance as an admin.
+
+Inspired by [niptools](https://gitlab.camh.ca/xnat/niptools).
 
 ## Install
 
@@ -20,7 +22,7 @@ pip install xnatio
 From Git (main branch):
 
 ```bash
-pip install git+https://github.com/<ORG>/<REPO>.git@main#egg=xnatio
+pip install git+https://gitlab.camh.ca/xnat/xnatio.git@main#egg=xnatio
 ```
 
 ## Configure
