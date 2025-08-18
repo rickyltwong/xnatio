@@ -1,0 +1,17 @@
+[project]
+name = "xnatio"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pyxnat>=1.6.3",
+    "python-dotenv>=1.0.1",
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+xnatio = "xnatio.cli:run_cli"
+
+[tool.uv]
+package = true

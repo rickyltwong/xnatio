@@ -1,0 +1,52 @@
+# Env files
+.env
+.env.dev
+
+# Python cache/bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments (just in case)
+.venv/
+venv/
+.envrc
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# uv artifacts
+.uv/
+uv.lock
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+
+# Coverage/test
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
+
+# Local data and large test assets
+/tests/data/**
+/tests/**/fixtures/**
+**/*.tar
+**/*.tar.gz
+**/*.tgz
+**/*.zip
+
+# OS junk
+Thumbs.db
