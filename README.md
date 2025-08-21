@@ -46,6 +46,7 @@ XNAT_VERIFY_TLS=true
 - `upload-zip`: Upload a ZIP/TAR(.gz)/TGZ and push non-DICOM files to `MISC`.
 - `download-session`: Download scans and all session resources; optional assessors and reconstructions; can auto-extract and clean up zips.
 - `extract-session`: Extract all zips in a session directory into structured folders.
+- `upload-resource`: Upload a local file or directory into a session resource. Directories are zipped locally and extracted server-side.
 
 ### Help
 
@@ -82,6 +83,20 @@ Extract a previously downloaded session directory:
 
 ```bash
 uv run xnatio extract-session outdir/NAT01_ROM_00000001_01_SE01_MR -v
+```
+
+Upload a local directory to a session resource (zipped automatically, extracted on server):
+
+```bash
+uv run xnatio upload-resource NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR BIDS \
+  tests/data/nat01/NAT01_ROM_00000001_01_SE01_MR/BIDS -v
+```
+
+Upload a single file to `resources/MISC`:
+
+```bash
+uv run xnatio upload-resource NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR MISC \
+  /path/to/file.txt -v
 ```
 
 ## Notes

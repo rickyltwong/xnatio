@@ -98,6 +98,30 @@ def build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
 
+    upres = subparsers.add_parser(
+        "upload-resource",
+        help="Upload a file or directory to a session resource (dir is zipped and extracted server-side)",
+    )
+    upres.add_argument("project", help="Project ID")
+    upres.add_argument("subject", help="Subject ID")
+    upres.add_argument("session", help="Session/experiment ID")
+    upres.add_argument("resource", help="Resource label (e.g., BIDS)")
+    upres.add_argument("path", type=Path, help="Local file or directory to upload")
+    upres.add_argument(
+        "--zip-name",
+        default=None,
+        help="Optional zip filename to use on server (defaults to <resource>.zip)",
+    )
+    upres.add_argument(
+        "--env",
+        dest="env_name",
+        default=None,
+        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+    )
+    upres.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
     return parser
 
 
@@ -156,6 +180,29 @@ def run_cli(argv: list[str] | None = None) -> int:
         cfg = load_config(args.env_name)
         client = XNATClient.from_config(cfg)
         client.extract_session_downloads(args.session_dir)
+        return 0
+
+    if args.command == "upload-resource":
+        cfg = load_config(args.env_name)
+        client = XNATClient.from_config(cfg)
+        p: Path = args.path
+        if p.is_dir():
+            client.upload_session_resource_zip_dir(
+                project=args.project,
+                subject=args.subject,
+                session=args.session,
+                resource_label=args.resource,
+                local_dir=p,
+                zip_name=args.zip_name,
+            )
+        else:
+            client.upload_session_resource_file(
+                project=args.project,
+                subject=args.subject,
+                session=args.session,
+                resource_label=args.resource,
+                file_path=p,
+            )
         return 0
 
     parser.error("Unknown command")

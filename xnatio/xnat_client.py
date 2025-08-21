@@ -9,8 +9,7 @@ from urllib.parse import quote
 import requests
 from pyxnat import Interface
 import zipfile
-
-from .utils import archive_members, archive_read
+import tempfile
 
 
 class XNATClient:
@@ -134,43 +133,24 @@ class XNATClient:
         except Exception:
             pass
 
-    def upload_archive(
+    def upload_dicom_zip(
         self,
         archive: Path,
         *,
-        project: Optional[str] = None,
-        subject: Optional[str] = None,
-        session: Optional[str] = None,
+        project: str,
+        subject: str,
+        session: str,
         import_handler: str = "DICOM-zip",
         ignore_unparsable: bool = True,
     ) -> None:
-        """Upload a ZIP/TAR archive as a DICOM package, then push non-DICOM files to MISC.
+        """Upload a DICOM ZIP/TAR archive to the XNAT import service.
 
-        If all of `project`, `subject`, and `session` are provided, they are used.
-        Otherwise, IDs are parsed from the archive's stem using `self.default_project`.
-
-        Parameters
-        - archive: Path to the .zip/.tar/.tar.gz/.tgz archive
-        - project, subject, session: Optional explicit IDs. All three must be set to override parsing
-        - import_handler: XNAT import handler (default "DICOM-zip")
-        - ignore_unparsable: Whether to ignore unparsable files for import
+        Ensures the subject and session exist, then POSTs the archive to
+        `/data/services/import` with the given handler.
         """
         log = logging.getLogger(archive.name)
-
-        if project and subject and session:
-            proj, subj, sess = project, subject, session
-        else:
-            if not self.default_project:
-                raise ValueError(
-                    "No project overrides provided and no default_project set to parse IDs"
-                )
-            proj, subj, sess = self.parse_ids(
-                archive.stem, cfg_project=self.default_project
-            )
-
-        # Always ensure subject and session exist before import
-        self.ensure_subject(proj, subj, auto_create=True)
-        self.ensure_session(proj, subj, sess)
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
 
         imp_url = f"{self.server}/data/services/import"
         log.info(
@@ -180,9 +160,9 @@ class XNATClient:
         with open(archive, "rb") as f:
             files = {"file": (archive.name, f)}
             data = {
-                "project": proj,
-                "subject": subj,
-                "session": sess,
+                "project": project,
+                "subject": subject,
+                "session": session,
                 "inbody": "true",
                 "import-handler": import_handler,
                 "Ignore-Unparsable": "true" if ignore_unparsable else "false",
@@ -197,32 +177,159 @@ class XNATClient:
             resp.raise_for_status()
             log.info(f"DICOM import OK ({resp.status_code})")
 
-        log.info("Uploading individual non-DICOM files to MISC resources...")
-        for member in archive_members(archive):
-            low = member.lower()
-            if low.endswith(".dcm"):
-                continue
-            if member.endswith("/"):
-                continue
+    def upload_archive(
+        self,
+        archive: Path,
+        *,
+        project: Optional[str] = None,
+        subject: Optional[str] = None,
+        session: Optional[str] = None,
+        import_handler: str = "DICOM-zip",
+        ignore_unparsable: bool = True,
+    ) -> None:
+        """Upload a ZIP/TAR archive as a DICOM package via the import service.
 
+        If all of `project`, `subject`, and `session` are provided, they are used.
+        Otherwise, IDs are parsed from the archive's stem using `self.default_project`.
+
+        Parameters
+        - archive: Path to the .zip/.tar/.tar.gz/.tgz archive
+        - project, subject, session: Optional explicit IDs. All three must be set to override parsing
+        - import_handler: XNAT import handler (default "DICOM-zip")
+        - ignore_unparsable: Whether to ignore unparsable files for import
+        """
+        if project and subject and session:
+            proj, subj, sess = project, subject, session
+        else:
+            if not self.default_project:
+                raise ValueError(
+                    "No project overrides provided and no default_project set to parse IDs"
+                )
+            proj, subj, sess = self.parse_ids(
+                archive.stem, cfg_project=self.default_project
+            )
+
+        self.upload_dicom_zip(
+            archive,
+            project=proj,
+            subject=subj,
+            session=sess,
+            import_handler=import_handler,
+            ignore_unparsable=ignore_unparsable,
+        )
+
+    def upload_session_resource_dir(
+        self,
+        *,
+        project: str,
+        subject: str,
+        session: str,
+        resource_label: str,
+        local_dir: Path,
+    ) -> None:
+        """Upload all files under a local directory to a session resource.
+
+        Files are uploaded preserving their relative paths under ``local_dir`` to
+        ``/resources/<resource_label>/files/<relative_path>`` on the session.
+        Subject and session are ensured to exist prior to upload.
+        """
+        if not local_dir.exists() or not local_dir.is_dir():
+            raise ValueError(f"Directory not found: {local_dir}")
+
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
+
+        log = logging.getLogger(f"{session}:{resource_label}")
+        log.info(f"Uploading directory {local_dir} → resource {resource_label}")
+        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        uploaded = 0
+        failed = 0
+        for path in sorted(local_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel_path = path.relative_to(local_dir).as_posix()
+            url = f"{base}/resources/{quote(resource_label)}/files/{quote(rel_path)}?inbody=true"
             try:
-                file_data = archive_read(archive, member)
-            except ValueError as e:
-                log.warning(f"Skipping {member}: {e}")
-                continue
+                with open(path, "rb") as f:
+                    r = self.http.put(
+                        url,
+                        data=f,
+                        headers={"Content-Type": "application/octet-stream"},
+                        timeout=self.http_timeouts,
+                        stream=True,
+                    )
+                if r.status_code in (200, 201):
+                    uploaded += 1
+                    if log.isEnabledFor(logging.INFO):
+                        log.info(f"OK {rel_path}")
+                else:
+                    failed += 1
+                    log.warning(f"{rel_path} → {r.status_code}")
+            except Exception as e:
+                failed += 1
+                log.warning(f"{rel_path} → error: {e}")
+        log.info(f"Upload complete: {uploaded} ok, {failed} failed")
 
-            url = (
-                f"{self.server}/data/projects/{proj}/subjects/{subj}/experiments/{sess}/"
-                f"resources/MISC/files/{quote(member)}"
-            )
-            r = self.http.put(
-                url,
-                data=file_data,
-                headers={"Content-Type": "application/octet-stream"},
-                stream=True,
-            )
-            if r.status_code not in (200, 201):
-                log.warning(f"Resource {member} → {r.status_code}")
+    def upload_session_resource_zip_dir(
+        self,
+        *,
+        project: str,
+        subject: str,
+        session: str,
+        resource_label: str,
+        local_dir: Path,
+        zip_name: Optional[str] = None,
+    ) -> None:
+        """Zip a directory and upload it once to a session resource with extract=true.
+
+        The directory is archived locally into a temporary ZIP, preserving relative paths,
+        then PUT as a single request to the resource endpoint with `?extract=true&inbody=true`.
+        """
+        if not local_dir.exists() or not local_dir.is_dir():
+            raise ValueError(f"Directory not found: {local_dir}")
+
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
+
+        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        zip_name = zip_name or f"{resource_label}.zip"
+        url = (
+            f"{base}/resources/{quote(resource_label)}/files/{quote(zip_name)}"
+            f"?extract=true&inbody=true"
+        )
+
+        log = logging.getLogger(f"{session}:{resource_label}")
+        log.info(f"Creating ZIP from {local_dir} → {zip_name}")
+        tmp_dir = Path(tempfile.gettempdir())
+        tmp_zip = tmp_dir / f"xnatio_{zip_name}"
+        # Create zip
+        with zipfile.ZipFile(
+            tmp_zip, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
+        ) as zf:
+            for path in sorted(local_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(local_dir).as_posix()
+                zf.write(path, arcname=rel)
+        size_mb = tmp_zip.stat().st_size / (1024 * 1024)
+        log.info(f"ZIP ready ({size_mb:.1f} MB). Uploading once with extract=true...")
+
+        try:
+            with open(tmp_zip, "rb") as f:
+                r = self.http.put(
+                    url,
+                    data=f,
+                    headers={"Content-Type": "application/zip"},
+                    timeout=self.http_timeouts,
+                    stream=True,
+                )
+            r.raise_for_status()
+            log.info(f"Extract upload OK ({r.status_code})")
+        finally:
+            try:
+                tmp_zip.unlink()
+            except Exception:
+                pass
 
     def _download_stream(self, url: str, out_path: Path) -> None:
         """Stream a URL to a local file using the client's HTTP session.
@@ -395,3 +502,42 @@ class XNATClient:
             with zipfile.ZipFile(zip_path) as zf:
                 zf.extractall(target_dir)
             self.log.info(f"Extracted {name}")
+
+    def upload_session_resource_file(
+        self,
+        *,
+        project: str,
+        subject: str,
+        session: str,
+        resource_label: str,
+        file_path: Path,
+        remote_name: Optional[str] = None,
+    ) -> None:
+        """Upload a single file to a session resource using one PUT with inbody=true.
+
+        If ``remote_name`` is not provided, the local filename is used.
+        """
+        if not file_path.exists() or not file_path.is_file():
+            raise ValueError(f"File not found: {file_path}")
+
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
+
+        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        remote = quote(remote_name or file_path.name)
+        url = f"{base}/resources/{quote(resource_label)}/files/{remote}?inbody=true"
+        log = logging.getLogger(f"{session}:{resource_label}")
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        log.info(
+            f"Uploading file {file_path} ({size_mb:.1f} MB) → {resource_label}/{remote}"
+        )
+        with open(file_path, "rb") as f:
+            r = self.http.put(
+                url,
+                data=f,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=self.http_timeouts,
+                stream=True,
+            )
+        r.raise_for_status()
+        log.info(f"File upload OK ({r.status_code})")

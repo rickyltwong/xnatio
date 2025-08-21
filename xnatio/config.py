@@ -11,9 +11,12 @@ def _project_root() -> Path:
 
 def _dotenv_path(env_name: Optional[str]) -> Path:
     root = _project_root()
+    if env_name and env_name.lower() in {"test", "testing"}:
+        return root / ".env.test"
+    if env_name and env_name.lower() in {"prod", "production"}:
+        return root / ".env.prod"
     if env_name and env_name.lower() in {"dev", "development"}:
         return root / ".env.dev"
-    # default
     return root / ".env"
 
 
@@ -45,6 +48,8 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
     dotenv_file = _dotenv_path(env_name)
     if dotenv_file.exists():
         load_dotenv(dotenv_file)
+    else:
+        raise FileNotFoundError(f"Environment file not found: {dotenv_file}")
 
     server = os.getenv("XNAT_SERVER")
     user = os.getenv("XNAT_USERNAME")
