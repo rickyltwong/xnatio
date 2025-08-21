@@ -1,6 +1,9 @@
 import argparse
 import logging
 from pathlib import Path
+import tempfile
+import zipfile
+import uuid
 
 from .config import load_config
 from .xnat_client import XNATClient
@@ -16,33 +19,44 @@ def _is_allowed_archive(path: Path) -> bool:
     return path.suffix.lower() in _ALLOWED_EXTS
 
 
+def _zip_dir_to_temp(dir_path: Path) -> Path:
+    """Create a temporary ZIP from a directory and return its path."""
+    tmp_zip = (
+        Path(tempfile.gettempdir()) / f"xnatio_{dir_path.name}_{uuid.uuid4().hex}.zip"
+    )
+    with zipfile.ZipFile(
+        tmp_zip, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
+    ) as zf:
+        for path in sorted(dir_path.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(dir_path).as_posix()
+            zf.write(path, arcname=rel)
+    return tmp_zip
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="xnatio", description="XNAT CLI utilities")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     upload = subparsers.add_parser(
-        "upload-zip",
-        help="Upload a ZIP/TAR archive to XNAT and push non-DICOM files to MISC",
+        "upload-dicom",
+        help="Upload a DICOM session from a ZIP/TAR archive or directory via import service",
     )
-    upload.add_argument("archive", type=Path, help="Path to ZIP/TAR archive")
+    upload.add_argument("project", help="Project ID")
+    upload.add_argument("subject", help="Subject ID")
+    upload.add_argument("session", help="Session/experiment ID")
+    upload.add_argument(
+        "input",
+        type=Path,
+        help="Path to ZIP/TAR(.gz)/TGZ archive or a directory of DICOM files",
+    )
     upload.add_argument(
         "--env",
         dest="env_name",
         default=None,
         help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
-    )
-    upload.add_argument(
-        "--project", dest="project_override", default=None, help="Override project ID"
-    )
-    upload.add_argument(
-        "--subject", dest="subject_override", default=None, help="Override subject ID"
-    )
-    upload.add_argument(
-        "--session",
-        dest="session_override",
-        default=None,
-        help="Override session/experiment ID",
     )
     upload.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -134,23 +148,40 @@ def run_cli(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s ┊ %(message)s",
     )
 
-    if args.command == "upload-zip":
-        archive: Path = args.archive
-        if not archive.exists() or not archive.is_file():
-            parser.error(f"Archive not found: {archive}")
-        if not _is_allowed_archive(archive):
-            parser.error(
-                "Unsupported archive type. Accepted: .zip, .tar, .tar.gz, .tgz"
-            )
-
+    if args.command == "upload-dicom":
         cfg = load_config(args.env_name)
         client = XNATClient.from_config(cfg)
-        client.upload_archive(
-            archive,
-            project=args.project_override,
-            subject=args.subject_override,
-            session=args.session_override,
-        )
+
+        inp: Path = args.input
+        tmp_zip: Path | None = None
+        try:
+            if inp.is_dir():
+                logging.getLogger(__name__).info(f"Creating ZIP from directory {inp}…")
+                tmp_zip = _zip_dir_to_temp(inp)
+                archive = tmp_zip
+            elif inp.is_file():
+                if not _is_allowed_archive(inp):
+                    parser.error(
+                        "Unsupported archive type. Accepted: .zip, .tar, .tar.gz, .tgz (or pass a directory)"
+                    )
+                archive = inp
+            else:
+                parser.error(f"Input not found: {inp}")
+
+            client.upload_archive(
+                archive,
+                project=args.project,
+                subject=args.subject,
+                session=args.session,
+            )
+        finally:
+            if tmp_zip is not None:
+                try:
+                    tmp_zip.unlink()
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        f"Failed to remove temp zip {tmp_zip}"
+                    )
         return 0
 
     if args.command == "download-session":

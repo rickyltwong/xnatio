@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Sequence
 from urllib.parse import quote
 
 import requests
@@ -105,7 +105,7 @@ class XNATClient:
         """Ensure a subject exists in the given project.
 
         If `auto_create` is True, attempt to create the subject (no-op if it exists).
-        Raises RuntimeError if creation is disabled and subject might be missing.
+        Raises RuntimeError if creation is disabled and subject may be missing.
         """
         if not auto_create:
             raise RuntimeError(
@@ -142,11 +142,34 @@ class XNATClient:
         session: str,
         import_handler: str = "DICOM-zip",
         ignore_unparsable: bool = True,
+        dest: Optional[str] = None,
+        overwrite: str = "none",
+        overwrite_files: bool = False,
+        quarantine: bool = False,
+        trigger_pipelines: bool = True,
+        rename: bool = False,
+        srcs: Optional[Sequence[str]] = None,
+        http_session_listener: Optional[str] = None,
+        direct_archive: bool = False,
     ) -> None:
         """Upload a DICOM ZIP/TAR archive to the XNAT import service.
 
         Ensures the subject and session exist, then POSTs the archive to
         `/data/services/import` with the given handler.
+
+        Parameters
+        - project, subject, session: Target identifiers (used unless `dest` routes explicitly)
+        - import_handler: XNAT import handler (default "DICOM-zip")
+        - ignore_unparsable: If True, discard non-DICOM files in archive (XNAT 1.8.3+)
+        - dest: Optional destination route (e.g., "/prearchive" or "/prearchive/projects/PROJECT")
+        - overwrite: "none" | "append" | "delete" (default "none")
+        - overwrite_files: Allow file overwrites for merges (default False)
+        - quarantine: Place modified content in quarantine (default False → follow project settings)
+        - trigger_pipelines: Run AutoRun pipeline for affected sessions (default True)
+        - rename: With gradual-DICOM, instruct XNAT to rename incoming DICOM files (default False)
+        - srcs: Alternate mode for server-side sources (comma-joined if provided). Typically unused when uploading a file body.
+        - http_session_listener: Optional identifier used by the web-based uploader for tracking
+        - direct_archive: Use direct-to-archive behavior (XNAT 1.8.3+, default False)
         """
         log = logging.getLogger(archive.name)
         self.ensure_subject(project, subject, auto_create=True)
@@ -159,18 +182,34 @@ class XNATClient:
 
         with open(archive, "rb") as f:
             files = {"file": (archive.name, f)}
-            data = {
-                "project": project,
-                "subject": subject,
-                "session": session,
+            data_items = {
                 "inbody": "true",
                 "import-handler": import_handler,
                 "Ignore-Unparsable": "true" if ignore_unparsable else "false",
+                # Common targeting fields supported by DICOM-zip when not using `dest`
+                "project": project,
+                "subject": subject,
+                "session": session,
+                # Explicit defaults mirroring server behavior
+                "overwrite": overwrite,
+                "overwrite_files": "true" if overwrite_files else "false",
+                "quarantine": "true" if quarantine else "false",
+                "triggerPipelines": "true" if trigger_pipelines else "false",
+                "rename": "true" if rename else "false",
+                "Direct-Archive": "true" if direct_archive else "false",
             }
+            if dest:
+                data_items["dest"] = dest
+            if http_session_listener:
+                data_items["http-session-listener"] = http_session_listener
+            if srcs:
+                # API allows multiple src attributes or comma-separated list
+                data_items["src"] = ",".join(srcs)
+
             resp = self.http.post(
                 imp_url,
                 files=files,
-                data=data,
+                data=data_items,
                 timeout=self.http_timeouts,
                 stream=True,
             )
