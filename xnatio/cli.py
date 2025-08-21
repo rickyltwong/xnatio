@@ -39,7 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--subject", dest="subject_override", default=None, help="Override subject ID"
     )
     upload.add_argument(
-        "--session", dest="session_override", default=None, help="Override session/experiment ID"
+        "--session",
+        dest="session_override",
+        default=None,
+        help="Override session/experiment ID",
     )
     upload.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -74,20 +77,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Extract downloaded ZIPs into folders and remove the ZIP files",
     )
-    dl.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    dl.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
 
     ex = subparsers.add_parser(
         "extract-session",
         help="Extract all zips in a session directory into scans/ and resources/<label>/",
     )
-    ex.add_argument("session_dir", type=Path, help="Session directory containing downloaded ZIPs")
+    ex.add_argument(
+        "session_dir", type=Path, help="Session directory containing downloaded ZIPs"
+    )
     ex.add_argument(
         "--env",
         dest="env_name",
         default=None,
         help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
     )
-    ex.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    ex.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
 
     return parser
 
@@ -117,7 +126,6 @@ def run_cli(argv: list[str] | None = None) -> int:
             project=args.project_override,
             subject=args.subject_override,
             session=args.session_override,
-            auto_subject=bool(cfg.get("auto_subject", True)),
         )
         return 0
 

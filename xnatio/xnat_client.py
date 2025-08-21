@@ -120,6 +120,20 @@ class XNATClient:
             # Best-effort; subject may already exist.
             pass
 
+    def ensure_session(self, project: str, subject: str, session: str) -> None:
+        """Ensure a session exists for the subject in the project.
+
+        Best-effort creation; no error if it already exists.
+        """
+        session_path = (
+            f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        )
+        try:
+            # Create MR session by default; XNAT will upsert if existing
+            self.interface.put(session_path, params={"xsiType": "xnat:mrSessionData"})
+        except Exception:
+            pass
+
     def upload_archive(
         self,
         archive: Path,
@@ -127,7 +141,6 @@ class XNATClient:
         project: Optional[str] = None,
         subject: Optional[str] = None,
         session: Optional[str] = None,
-        auto_subject: bool = True,
         import_handler: str = "DICOM-zip",
         ignore_unparsable: bool = True,
     ) -> None:
@@ -139,7 +152,6 @@ class XNATClient:
         Parameters
         - archive: Path to the .zip/.tar/.tar.gz/.tgz archive
         - project, subject, session: Optional explicit IDs. All three must be set to override parsing
-        - auto_subject: Attempt to create subject if it does not exist
         - import_handler: XNAT import handler (default "DICOM-zip")
         - ignore_unparsable: Whether to ignore unparsable files for import
         """
@@ -156,7 +168,9 @@ class XNATClient:
                 archive.stem, cfg_project=self.default_project
             )
 
-        self.ensure_subject(proj, subj, auto_create=auto_subject)
+        # Always ensure subject and session exist before import
+        self.ensure_subject(proj, subj, auto_create=True)
+        self.ensure_session(proj, subj, sess)
 
         imp_url = f"{self.server}/data/services/import"
         log.info(

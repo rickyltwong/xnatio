@@ -35,7 +35,6 @@ XNAT_USERNAME=your_user
 XNAT_PASSWORD=your_password
 XNAT_PROJECT=YOUR_PROJECT
 # optional
-XNAT_AUTO_SUBJECT=true
 XNAT_VERIFY_TLS=true
 ```
 

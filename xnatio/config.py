@@ -37,7 +37,6 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
       - XNAT_USERNAME
       - XNAT_PASSWORD
       - XNAT_PROJECT
-      - XNAT_AUTO_SUBJECT (optional, default True)
       - XNAT_VERIFY_TLS (optional, default True)
     """
     # Allow environment variable to choose the env file if not provided explicitly
@@ -67,7 +66,6 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
             f"Missing required environment variables: {', '.join(missing)}"
         )
 
-    auto_subject = _str_to_bool(os.getenv("XNAT_AUTO_SUBJECT"), default=True)
     verify_tls = _str_to_bool(os.getenv("XNAT_VERIFY_TLS"), default=True)
 
     return {
@@ -75,6 +73,5 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
         "user": user,
         "password": password,
         "project": project,
-        "auto_subject": auto_subject,
         "verify_tls": verify_tls,
     }

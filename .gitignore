@@ -1,6 +1,8 @@
 # Env files
 .env
 .env.dev
+.env.test
+.env.prod
 
 # Python cache/bytecode
 __pycache__/
