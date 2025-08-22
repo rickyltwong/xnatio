@@ -6,23 +6,65 @@ Inspired by [niptools](https://gitlab.camh.ca/xnat/niptools).
 
 ## Install
 
-Using uv (recommended):
+- Recommended: install from the GitLab Package Registry.
+- Alternative: use pipx for an isolated CLI, or install from source.
+
+### A) GitLab Package Registry (recommended)
+
+1) Get the project ID from the GitLab project sidebar. Example: `12345`.
+
+2) Get credentials:
+- Deploy Token (recommended): scope `read_package_registry`. Use the provided username `gitlab+deploy-token-<id>` and the token as the password.
+- Or a Personal Access Token: scope `read_api`. Use username `oauth2` and the token as the password.
+
+3) Install (inline credentials):
+
+```bash
+pip install \
+  --index-url https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple \
+  --extra-index-url https://pypi.org/simple \
+  xnatio
+```
+
+Or configure pip once and then install:
+
+```bash
+pip config set global.index-url "https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple"
+pip config set global.extra-index-url "https://pypi.org/simple"
+
+pip install xnatio
+```
+
+Replace `USERNAME`/`PASSWORD` and `PROJECT_ID` as described above.
+
+### B) pipx (isolated CLI)
+
+```bash
+pipx install \
+  --index-url https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple \
+  --extra-index-url https://pypi.org/simple \
+  xnatio
+
+# Use
+xnatio --help
+```
+
+### C) From source
+
+Using uv (fast):
 
 ```bash
 uv sync
 uv run xnatio --help
 ```
 
-From PyPI (once published):
+Using pip (virtualenv recommended):
 
 ```bash
-pip install xnatio
-```
-
-From Git (main branch):
-
-```bash
-pip install git+https://gitlab.camh.ca/xnat/xnatio.git@main#egg=xnatio
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+xnatio --help
 ```
 
 ## Configure
