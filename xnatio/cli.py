@@ -136,6 +136,29 @@ def build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
 
+    # New: create-project
+    create_proj = subparsers.add_parser(
+        "create-project",
+        help="Create a new XNAT project via REST API",
+    )
+    create_proj.add_argument(
+        "project_id", help="Project ID (used for ID, secondary_ID, and name)"
+    )
+    create_proj.add_argument(
+        "--description",
+        default=None,
+        help="Optional project description",
+    )
+    create_proj.add_argument(
+        "--env",
+        dest="env_name",
+        default=None,
+        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+    )
+    create_proj.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
     return parser
 
 
@@ -234,6 +257,15 @@ def run_cli(argv: list[str] | None = None) -> int:
                 resource_label=args.resource,
                 file_path=p,
             )
+        return 0
+
+    if args.command == "create-project":
+        cfg = load_config(args.env_name)
+        client = XNATClient.from_config(cfg)
+        client.create_project(project_id=args.project_id, description=args.description)
+        logging.getLogger(__name__).info(
+            f"Project '{args.project_id}' created or already exists."
+        )
         return 0
 
     parser.error("Unknown command")

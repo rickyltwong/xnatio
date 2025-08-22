@@ -39,7 +39,6 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
       - XNAT_SERVER
       - XNAT_USERNAME
       - XNAT_PASSWORD
-      - XNAT_PROJECT
       - XNAT_VERIFY_TLS (optional, default True)
     """
     # Allow environment variable to choose the env file if not provided explicitly
@@ -54,16 +53,14 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
     server = os.getenv("XNAT_SERVER")
     user = os.getenv("XNAT_USERNAME")
     password = os.getenv("XNAT_PASSWORD")
-    project = os.getenv("XNAT_PROJECT")
 
-    if not server or not user or not password or not project:
+    if not server or not user or not password:
         missing = [
             name
             for name, val in (
                 ("XNAT_SERVER", server),
                 ("XNAT_USERNAME", user),
                 ("XNAT_PASSWORD", password),
-                ("XNAT_PROJECT", project),
             )
             if not val
         ]
@@ -77,6 +74,5 @@ def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
         "server": server,
         "user": user,
         "password": password,
-        "project": project,
         "verify_tls": verify_tls,
     }

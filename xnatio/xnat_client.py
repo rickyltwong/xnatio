@@ -10,6 +10,7 @@ import requests
 from pyxnat import Interface
 import zipfile
 import tempfile
+from xml.etree.ElementTree import Element, SubElement, tostring
 
 
 class XNATClient:
@@ -28,7 +29,6 @@ class XNATClient:
         username: str,
         password: str,
         *,
-        default_project: Optional[str] = None,
         verify_tls: bool = True,
         http_timeouts: Tuple[int, int] = (60, 72000),
         logger: Optional[logging.Logger] = None,
@@ -39,8 +39,6 @@ class XNATClient:
         - server: Base URL of the XNAT server (e.g., https://xnat.example.org)
         - username: XNAT username
         - password: XNAT password
-        - default_project: Optional project label used for `parse_ids` when
-          explicit overrides are not supplied
         - verify_tls: Whether to verify TLS certificates
         - http_timeouts: (connect_timeout_seconds, read_timeout_seconds)
         - logger: Optional logger; if None, a module logger is used
@@ -48,7 +46,6 @@ class XNATClient:
         self.server = server.rstrip("/")
         self.username = username
         self.password = password
-        self.default_project = default_project
         self.verify_tls = verify_tls
         self.http_timeouts = http_timeouts
         self.log = logger or logging.getLogger(__name__)
@@ -67,37 +64,49 @@ class XNATClient:
     def from_config(cls, cfg: Dict[str, object]) -> "XNATClient":
         """Construct a client from a dict loaded via .env.
 
-        Expected keys in cfg: server, user, password, project.
+        Expected keys in cfg: server, user, password.
         """
         return cls(
             server=str(cfg["server"]),
             username=str(cfg["user"]),
             password=str(cfg["password"]),
-            default_project=str(cfg.get("project", "")) or None,
             verify_tls=bool(cfg.get("verify_tls", True)),
         )
 
-    @staticmethod
-    def parse_ids(stem: str, cfg_project: str) -> Tuple[str, str, str]:
-        """Parse IDs from an archive stem using the configured project prefix.
+    def create_project(
+        self, project_id: str, description: Optional[str] = None
+    ) -> None:
+        """Create a new project using XNAT REST API.
 
-        Expected filename stem format: "<PROJECT>_<SUBJECT>_<SESSION>" where
-        <PROJECT> equals `cfg_project` (may contain underscores).
+        This sends an XML document to POST /data/projects with required
+        fields ID, secondary_ID, and name set to the same provided value.
+        Optionally sets description if provided.
 
-        Returns (project, subject, session).
-        Raises ValueError if the stem doesn't match the expected format.
+        Treats HTTP 200/201 as success, and 409 (already exists) as a no-op success.
         """
-        pref = f"{cfg_project}_"
-        if not stem.startswith(pref):
-            raise ValueError(f"{stem} doesn’t start with project '{cfg_project}_'")
+        ns = "http://nrg.wustl.edu/xnat"
+        root = Element(f"{{{ns}}}projectData")
+        SubElement(root, f"{{{ns}}}ID").text = project_id
+        SubElement(root, f"{{{ns}}}secondary_ID").text = project_id
+        SubElement(root, f"{{{ns}}}name").text = project_id
+        if description:
+            SubElement(root, f"{{{ns}}}description").text = description
 
-        remainder = stem[len(pref) :]
-        try:
-            subject, session = remainder.rsplit("_", 1)
-        except ValueError:
-            raise ValueError("Need exactly one '_' after project for subject/session")
-
-        return cfg_project, subject, session
+        xml_body = tostring(root, encoding="utf-8", xml_declaration=True)
+        url = f"{self.server}/data/projects"
+        r = self.http.post(
+            url,
+            data=xml_body,
+            headers={"Content-Type": "application/xml"},
+            timeout=self.http_timeouts,
+        )
+        if r.status_code in (200, 201):
+            self.log.info(f"Project create OK ({r.status_code})")
+            return
+        if r.status_code == 409:
+            self.log.info("Project already exists (409)")
+            return
+        r.raise_for_status()
 
     def ensure_subject(
         self, project: str, subject: str, *, auto_create: bool = True
@@ -220,39 +229,25 @@ class XNATClient:
         self,
         archive: Path,
         *,
-        project: Optional[str] = None,
-        subject: Optional[str] = None,
-        session: Optional[str] = None,
+        project: str,
+        subject: str,
+        session: str,
         import_handler: str = "DICOM-zip",
         ignore_unparsable: bool = True,
     ) -> None:
         """Upload a ZIP/TAR archive as a DICOM package via the import service.
 
-        If all of `project`, `subject`, and `session` are provided, they are used.
-        Otherwise, IDs are parsed from the archive's stem using `self.default_project`.
-
         Parameters
         - archive: Path to the .zip/.tar/.tar.gz/.tgz archive
-        - project, subject, session: Optional explicit IDs. All three must be set to override parsing
+        - project, subject, session: Explicit IDs
         - import_handler: XNAT import handler (default "DICOM-zip")
         - ignore_unparsable: Whether to ignore unparsable files for import
         """
-        if project and subject and session:
-            proj, subj, sess = project, subject, session
-        else:
-            if not self.default_project:
-                raise ValueError(
-                    "No project overrides provided and no default_project set to parse IDs"
-                )
-            proj, subj, sess = self.parse_ids(
-                archive.stem, cfg_project=self.default_project
-            )
-
         self.upload_dicom_zip(
             archive,
-            project=proj,
-            subject=subj,
-            session=sess,
+            project=project,
+            subject=subject,
+            session=session,
             import_handler=import_handler,
             ignore_unparsable=ignore_unparsable,
         )
