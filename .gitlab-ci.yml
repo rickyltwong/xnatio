@@ -6,6 +6,10 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   GIT_STRATEGY: fetch
 
+default:
+  tags:
+    - kcni-docker
+
 .default_before_script: &default_before_script
   - python --version
   - pip --version
