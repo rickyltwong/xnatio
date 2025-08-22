@@ -48,6 +48,7 @@ XNAT_VERIFY_TLS=true
 - **download-session**: Download scans and all session resources; optional assessors and reconstructions; can auto-extract and clean up zips
 - **extract-session**: Extract all zips in a session directory into structured folders
 - **upload-resource**: Upload a local file or directory into a session resource. Directories are zipped locally and extracted server-side
+- **create-project**: Create a new project in XNAT (ID, secondary_ID, name set to the provided value)
 
 ### Help
 
@@ -57,6 +58,7 @@ uv run xnatio upload-dicom --help
 uv run xnatio download-session --help
 uv run xnatio extract-session --help
 uv run xnatio upload-resource --help
+uv run xnatio create-project --help
 ```
 
 ### Examples
@@ -79,28 +81,31 @@ Download a session into `outdir/SESSION_LABEL`, include assessors/recons, unzip 
 
 ```bash
 uv run xnatio download-session NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR outdir \
-  --include-assessors --include-recons --unzip -v
+  --include-assessors --include-recons --unzip --env dev -v
 ```
 
-Extract a previously downloaded session directory:
+### Install from GitLab Package Registry
+
+Once CI publishes a release (tag), users can install directly from the GitLab Python registry:
 
 ```bash
-uv run xnatio extract-session outdir/NAT01_ROM_00000001_01_SE01_MR -v
+pip install --index-url https://gitlab.camh.ca/api/v4/projects/<PROJECT_ID>/packages/pypi/simple \
+            --extra-index-url https://pypi.org/simple \
+            xnatio==0.1.0
 ```
 
-Upload a local directory to a session resource (zipped automatically, extracted on server):
+Or configure `~/.pip/pip.conf` or `~/.pypirc` to point to the GitLab index URL and then `pip install xnatio`.
+
+### Publishing (maintainers)
+
+- Push a tag (e.g., `v0.1.0`) to trigger the publish job:
 
 ```bash
-uv run xnatio upload-resource NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR BIDS \
-  tests/data/nat01/NAT01_ROM_00000001_01_SE01_MR/BIDS -v
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-Upload a single file to `resources/MISC`:
-
-```bash
-uv run xnatio upload-resource NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR MISC \
-  /path/to/file.txt -v
-```
+The pipeline builds wheels/sdist and uploads them to the project’s GitLab Package Registry using the CI job token.
 
 ## Notes
 

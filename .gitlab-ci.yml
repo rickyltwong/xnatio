@@ -1,0 +1,52 @@
+stages:
+  - build
+  - publish
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  GIT_STRATEGY: fetch
+
+.default_before_script: &default_before_script
+  - python --version
+  - pip --version
+  - pip install --upgrade pip build twine
+
+build:wheel:
+  stage: build
+  image: python:3.13-slim
+  before_script:
+    - *default_before_script
+  script:
+    - python -m build
+    - ls -l dist
+  artifacts:
+    paths:
+      - dist/*.whl
+      - dist/*.tar.gz
+    expire_in: 1 week
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+publish:gitlab:
+  stage: publish
+  image: python:3.13-slim
+  needs: ["build:wheel"]
+  before_script:
+    - *default_before_script
+    - python -c "from pathlib import Path; p=Path.home()/'.pypirc'; p.write_text('[distutils]\nindex-servers =\n    gitlab\n\n[gitlab]\nrepository: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi\nusername: gitlab-ci-token\npassword: ${CI_JOB_TOKEN}\n'); print('wrote', p)"
+  script:
+    - twine upload --repository gitlab dist/*
+  rules:
+    - if: $CI_COMMIT_TAG
+
+install:test:
+  stage: build
+  image: python:3.13-slim
+  needs: ["build:wheel"]
+  before_script:
+    - pip install --upgrade pip
+  script:
+    - pip install dist/*.whl
+    - xnatio --help || python -m xnatio.main --help
+  rules:
+    - if: $CI_COMMIT_BRANCH 
