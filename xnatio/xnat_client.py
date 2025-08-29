@@ -152,14 +152,14 @@ class XNATClient:
         import_handler: str = "DICOM-zip",
         ignore_unparsable: bool = True,
         dest: Optional[str] = None,
-        overwrite: str = "none",
-        overwrite_files: bool = False,
+        overwrite: str = "delete",
+        overwrite_files: bool = True,
         quarantine: bool = False,
         trigger_pipelines: bool = True,
         rename: bool = False,
         srcs: Optional[Sequence[str]] = None,
         http_session_listener: Optional[str] = None,
-        direct_archive: bool = False,
+        direct_archive: bool = True,
     ) -> None:
         """Upload a DICOM ZIP/TAR archive to the XNAT import service.
 
@@ -186,71 +186,48 @@ class XNATClient:
 
         imp_url = f"{self.server}/data/services/import"
         log.info(
-            f"Starting upload of {archive.name} ({archive.stat().st_size / (1024 * 1024 * 1024):.1f} GB)"
+            f"Starting upload of {archive.name} ({archive.stat().st_size / (1024 * 1024 * 1024):.1f} GB); direct-archive option: {direct_archive}"
         )
 
+        # All parameters go on the query string according to XNAT API documentation
+        params = {
+            "import-handler": import_handler,
+            "Ignore-Unparsable": "true" if ignore_unparsable else "false",
+            # Common targeting fields supported by DICOM-zip when not using `dest`
+            "project": project,
+            "subject": subject,
+            "session": session,
+            # Explicit defaults mirroring server behavior
+            "overwrite": overwrite,
+            "overwrite_files": "true" if overwrite_files else "false",
+            "quarantine": "true" if quarantine else "false",
+            "triggerPipelines": "true" if trigger_pipelines else "false",
+            "rename": "true" if rename else "false",
+            # direct-archive option
+            "Direct-Archive": "true" if direct_archive else "false",
+        }
+
+        if dest:
+            params["dest"] = dest
+        if http_session_listener:
+            params["http-session-listener"] = http_session_listener
+        if srcs:
+            # API allows multiple src attributes or comma-separated list
+            params["src"] = ",".join(srcs)
+
+        # Use multipart form upload with generic 'file' field name; data-binary doesn't work after testing
         with open(archive, "rb") as f:
             files = {"file": (archive.name, f)}
-            data_items = {
-                "inbody": "true",
-                "import-handler": import_handler,
-                "Ignore-Unparsable": "true" if ignore_unparsable else "false",
-                # Common targeting fields supported by DICOM-zip when not using `dest`
-                "project": project,
-                "subject": subject,
-                "session": session,
-                # Explicit defaults mirroring server behavior
-                "overwrite": overwrite,
-                "overwrite_files": "true" if overwrite_files else "false",
-                "quarantine": "true" if quarantine else "false",
-                "triggerPipelines": "true" if trigger_pipelines else "false",
-                "rename": "true" if rename else "false",
-                "Direct-Archive": "true" if direct_archive else "false",
-            }
-            if dest:
-                data_items["dest"] = dest
-            if http_session_listener:
-                data_items["http-session-listener"] = http_session_listener
-            if srcs:
-                # API allows multiple src attributes or comma-separated list
-                data_items["src"] = ",".join(srcs)
 
             resp = self.http.post(
                 imp_url,
-                files=files,
-                data=data_items,
+                params=params,
+                files=files,  # multipart form data
                 timeout=self.http_timeouts,
                 stream=True,
             )
             resp.raise_for_status()
             log.info(f"DICOM import OK ({resp.status_code})")
-
-    def upload_archive(
-        self,
-        archive: Path,
-        *,
-        project: str,
-        subject: str,
-        session: str,
-        import_handler: str = "DICOM-zip",
-        ignore_unparsable: bool = True,
-    ) -> None:
-        """Upload a ZIP/TAR archive as a DICOM package via the import service.
-
-        Parameters
-        - archive: Path to the .zip/.tar/.tar.gz/.tgz archive
-        - project, subject, session: Explicit IDs
-        - import_handler: XNAT import handler (default "DICOM-zip")
-        - ignore_unparsable: Whether to ignore unparsable files for import
-        """
-        self.upload_dicom_zip(
-            archive,
-            project=project,
-            subject=subject,
-            session=session,
-            import_handler=import_handler,
-            ignore_unparsable=ignore_unparsable,
-        )
 
     def upload_session_resource_dir(
         self,
@@ -575,3 +552,99 @@ class XNATClient:
             )
         r.raise_for_status()
         log.info(f"File upload OK ({r.status_code})")
+
+    def delete_scans(
+        self,
+        project: str,
+        subject: str,
+        session: str,
+        scan_ids: Optional[list[str]] = None,
+    ) -> list[str]:
+        """
+        Delete scan files for a given project, subject, and session.
+
+        Parameters:
+        - project: Project ID
+        - subject: Subject ID
+        - session: Session/experiment ID
+        - scan_ids: List of specific scan IDs to delete, or None to delete all scans
+
+        Returns:
+        - List of scan IDs that were successfully deleted
+        """
+        if scan_ids is None:
+            self.log.info(f"Deleting ALL scans for {project}/{subject}/{session}")
+        else:
+            self.log.info(
+                f"Deleting scans {', '.join(scan_ids)} for {project}/{subject}/{session}"
+            )
+
+        # First, get list of available scans for this session
+        session_path = (
+            f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        )
+        scans_url = f"{session_path}/scans?format=json"
+
+        try:
+            resp = self.http.get(f"{self.server}{scans_url}", timeout=(30, 120))
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Extract available scan IDs from the response
+            results = (data or {}).get("ResultSet", {}).get("Result", [])
+            available_scan_ids = [r.get("ID") for r in results if r.get("ID")]
+
+            if not available_scan_ids:
+                self.log.info(f"No scans found for {project}/{subject}/{session}")
+                return []
+
+            self.log.info(f"Available scans: {', '.join(available_scan_ids)}")
+
+            # Determine which scans to delete
+            if scan_ids is None:
+                # Delete all scans
+                scans_to_delete = available_scan_ids
+            else:
+                # Delete only specified scans that exist
+                scans_to_delete = []
+                for scan_id in scan_ids:
+                    if scan_id in available_scan_ids:
+                        scans_to_delete.append(scan_id)
+                    else:
+                        self.log.warning(f"Scan {scan_id} not found, skipping")
+
+                if not scans_to_delete:
+                    self.log.info("No valid scan IDs to delete")
+                    return []
+
+            self.log.info(
+                f"Will delete {len(scans_to_delete)} scans: {', '.join(scans_to_delete)}"
+            )
+
+            # Delete each scan using HTTP session (respects SSL settings)
+            deleted_scans = []
+            for scan_id in scans_to_delete:
+                try:
+                    scan_url = f"{self.server}{session_path}/scans/{scan_id}"
+                    self.log.info(f"Deleting scan {scan_id}...")
+
+                    # Use HTTP session DELETE request (respects verify_tls setting)
+                    resp = self.http.delete(scan_url, timeout=(30, 120))
+                    resp.raise_for_status()
+                    deleted_scans.append(scan_id)
+                    self.log.info(f"✓ Deleted scan {scan_id}")
+
+                except Exception as e:
+                    self.log.error(f"✗ Failed to delete scan {scan_id}: {e}")
+                    continue
+
+            self.log.info(
+                f"Successfully deleted {len(deleted_scans)} out of {len(scans_to_delete)} scans"
+            )
+            return deleted_scans
+
+        except Exception as e:
+            self.log.error(
+                f"Failed to list/delete scans for {project}/{subject}/{session}: {e}"
+            )
+            raise

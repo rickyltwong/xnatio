@@ -1,38 +1,13 @@
+from __future__ import annotations
+
 import argparse
 import logging
 from pathlib import Path
-import tempfile
-import zipfile
-import uuid
+from typing import Optional
 
 from .config import load_config
 from .xnat_client import XNATClient
-
-
-_ALLOWED_EXTS = {".zip", ".tar", ".tgz"}
-
-
-def _is_allowed_archive(path: Path) -> bool:
-    name = path.name.lower()
-    if name.endswith(".tar.gz"):
-        return True
-    return path.suffix.lower() in _ALLOWED_EXTS
-
-
-def _zip_dir_to_temp(dir_path: Path) -> Path:
-    """Create a temporary ZIP from a directory and return its path."""
-    tmp_zip = (
-        Path(tempfile.gettempdir()) / f"xnatio_{dir_path.name}_{uuid.uuid4().hex}.zip"
-    )
-    with zipfile.ZipFile(
-        tmp_zip, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
-    ) as zf:
-        for path in sorted(dir_path.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(dir_path).as_posix()
-            zf.write(path, arcname=rel)
-    return tmp_zip
+from .utils import is_allowed_archive, zip_dir_to_temp
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,10 +134,37 @@ def build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
 
+    delete_scans = subparsers.add_parser(
+        "delete-scans",
+        help="Delete scan files for a given project, subject, and session",
+    )
+    delete_scans.add_argument("project", help="Project ID")
+    delete_scans.add_argument("subject", help="Subject ID")
+    delete_scans.add_argument("session", help="Session/experiment ID")
+    delete_scans.add_argument(
+        "--scan",
+        required=True,
+        help="Scan IDs to delete: use '*' to delete all scans, or comma-separated list like '1,2,3,4,6' for specific scans",
+    )
+    delete_scans.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Skip confirmation prompt (required for deletion)",
+    )
+    delete_scans.add_argument(
+        "--env",
+        dest="env_name",
+        default=None,
+        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+    )
+    delete_scans.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
     return parser
 
 
-def run_cli(argv: list[str] | None = None) -> int:
+def run_cli(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -176,14 +178,14 @@ def run_cli(argv: list[str] | None = None) -> int:
         client = XNATClient.from_config(cfg)
 
         inp: Path = args.input
-        tmp_zip: Path | None = None
+        tmp_zip: Optional[Path] = None
         try:
             if inp.is_dir():
                 logging.getLogger(__name__).info(f"Creating ZIP from directory {inp}…")
-                tmp_zip = _zip_dir_to_temp(inp)
+                tmp_zip = zip_dir_to_temp(inp)
                 archive = tmp_zip
             elif inp.is_file():
-                if not _is_allowed_archive(inp):
+                if not is_allowed_archive(inp):
                     parser.error(
                         "Unsupported archive type. Accepted: .zip, .tar, .tar.gz, .tgz (or pass a directory)"
                     )
@@ -191,11 +193,13 @@ def run_cli(argv: list[str] | None = None) -> int:
             else:
                 parser.error(f"Input not found: {inp}")
 
-            client.upload_archive(
+            client.upload_dicom_zip(
                 archive,
                 project=args.project,
                 subject=args.subject,
                 session=args.session,
+                import_handler="DICOM-zip",
+                ignore_unparsable=True,
             )
         finally:
             if tmp_zip is not None:
@@ -263,10 +267,49 @@ def run_cli(argv: list[str] | None = None) -> int:
         cfg = load_config(args.env_name)
         client = XNATClient.from_config(cfg)
         client.create_project(project_id=args.project_id, description=args.description)
-        logging.getLogger(__name__).info(
-            f"Project '{args.project_id}' created or already exists."
-        )
         return 0
 
-    parser.error("Unknown command")
-    return 2
+    if args.command == "delete-scans":
+        cfg = load_config(args.env_name)
+        client = XNATClient.from_config(cfg)
+
+        # Parse scan IDs
+        scan_ids_to_delete = args.scan
+        if scan_ids_to_delete == "*":
+            scan_ids = None  # Delete all scans
+            scan_description = "ALL scans"
+        else:
+            scan_ids = [s.strip() for s in scan_ids_to_delete.split(",")]
+            scan_description = f"scans {', '.join(scan_ids)}"
+
+        if not args.confirm:
+            print(f"WARNING: This will permanently delete {scan_description} for:")
+            print(f"  Project: {args.project}")
+            print(f"  Subject: {args.subject}")
+            print(f"  Session: {args.session}")
+            print()
+            print("This action cannot be undone!")
+            print()
+            response = input("Type 'DELETE' to confirm, or anything else to cancel: ")
+            if response != "DELETE":
+                print("Operation cancelled.")
+                return 1
+
+        deleted_scans = client.delete_scans(
+            project=args.project,
+            subject=args.subject,
+            session=args.session,
+            scan_ids=scan_ids,
+        )
+
+        if deleted_scans:
+            print(f"Deletion complete. Removed {len(deleted_scans)} scans.")
+            print("Deleted scan IDs:", ", ".join(deleted_scans))
+        else:
+            print("No scans were deleted.")
+
+        return 0
+
+    # If we get here, command was not recognized
+    parser.error(f"Unknown command: {args.command}")
+    return 1

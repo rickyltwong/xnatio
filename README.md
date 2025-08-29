@@ -91,6 +91,7 @@ XNAT_VERIFY_TLS=true
 - **extract-session**: Extract all zips in a session directory into structured folders
 - **upload-resource**: Upload a local file or directory into a session resource. Directories are zipped locally and extracted server-side
 - **create-project**: Create a new project in XNAT (ID, secondary_ID, name set to the provided value)
+- **delete-scans**: Delete specific scan files or all scans for a given project, subject, and session (use with caution!)
 
 ### Help
 
@@ -101,6 +102,7 @@ uv run xnatio download-session --help
 uv run xnatio extract-session --help
 uv run xnatio upload-resource --help
 uv run xnatio create-project --help
+uv run xnatio delete-scans --help
 ```
 
 ### Examples
@@ -124,6 +126,22 @@ Download a session into `outdir/SESSION_LABEL`, include assessors/recons, unzip 
 ```bash
 uv run xnatio download-session NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR outdir \
   --include-assessors --include-recons --unzip --env dev -v
+```
+
+Delete scans for a session:
+
+```bash
+# Delete all scans (interactive confirmation required)
+uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+  --scan "*" --env test -v
+
+# Delete specific scans by ID
+uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+  --scan "1,2,3,4,6" --env test -v
+
+# Skip confirmation prompt with --confirm flag
+uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+  --scan "*" --confirm --env test -v
 ```
 
 ### Install from GitLab Package Registry

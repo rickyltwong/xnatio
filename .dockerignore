@@ -1,0 +1,19 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.egg-info
+.build
+build/
+dist/
+.ruff_cache
+.cache
+.idea
+.vscode
+*.log
+
+# Tests and docs not needed for building the binary
+tests/
+docs/ 

@@ -1,5 +1,5 @@
 # Env files
-#.env
+.env
 .env.dev
 .env.test
 .env.prod
@@ -9,7 +9,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments (just in case)
+# Virtual environments
 .venv/
 venv/
 .envrc
@@ -22,7 +22,6 @@ dist/
 
 # uv artifacts
 .uv/
-uv.lock
 
 # IDE/editor
 .vscode/
@@ -45,10 +44,6 @@ htmlcov/
 # Local data and large test assets
 /tests/data/**
 /tests/**/fixtures/**
-**/*.tar
-**/*.tar.gz
-**/*.tgz
-**/*.zip
 
 # OS junk
 Thumbs.db
