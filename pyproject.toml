@@ -1,11 +1,11 @@
 [project]
 name = "xnatio"
 version = "0.1.0"
-description = "CLI utilities for interacting with CAMH XNAT instance with focus on admin use cases"
+description = "CLI utilities for interacting with XNAT instance with focus on admin use cases"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "Ricky Wong", email = "ricky.wong@camh.ca, "}
+    {name = "Ricky Wong", email = "ricky.wong@camh.ca"}
 ]
 license = {text = "MIT"}
 homepage = "https://gitlab.camh.ca/xnat/xnatio"
@@ -34,6 +34,7 @@ dependencies = [
 
 [project.scripts]
 xnatio = "xnatio.cli:run_cli"
+xio = "xnatio.cli:run_cli"
 
 [tool.uv]
 package = true

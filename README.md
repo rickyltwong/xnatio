@@ -12,6 +12,11 @@ Inspired by [niptools](https://gitlab.camh.ca/xnat/niptools).
 git clone https://gitlab.camh.ca/xnat/xnatio.git
 cd xnatio
 pip install .
+
+# Test the installation
+xnatio --help
+# or use the shorter alias:
+xio --help
 ```
 
 ### For Development
@@ -88,10 +93,15 @@ XNAT_VERIFY_TLS=true
 - **create-project**: Create a new project in XNAT (ID, secondary_ID, name set to the provided value)
 - **delete-scans**: Delete specific scan files or all scans for a given project, subject, and session (use with caution!)
 
+> **Tip**: You can use the shorter alias `xio` instead of `xnatio` for all commands (e.g., `xio --help`, `xio upload-dicom`, etc.)
+
 ### Help
 
 ```bash
 xnatio --help
+# or use the shorter alias:
+xio --help
+
 xnatio upload-dicom --help
 xnatio download-session --help
 xnatio extract-session --help
@@ -107,26 +117,30 @@ Upload a DICOM session from an archive:
 ```bash
 xnatio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   /path/to/ARCHIVE.zip --env test -v
+
+# or using the shorter alias:
+xio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+  /path/to/ARCHIVE.zip --env test -v
 ```
 
 Upload a DICOM session from a directory (auto-zipped to a temporary file first):
 
 ```bash
-xnatio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   /path/to/dicom_dir --env test -v
 ```
 
 Download a session into `outdir/SESSION_LABEL`, include assessors/recons, unzip and remove zips:
 
 ```bash
-xnatio download-session TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR outdir \
+xio download-session TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR outdir \
   --include-assessors --include-recons --unzip --env dev -v
 ```
 
 Upload a directory as a session resource (zipped and extracted server-side):
 
 ```bash
-xnatio upload-resource TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio upload-resource TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   BIDS /path/to/bids_directory --env test -v
 ```
 
@@ -134,15 +148,15 @@ Delete scans for a session:
 
 ```bash
 # Delete all scans (interactive confirmation required)
-xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "*" --env test -v
 
 # Delete specific scans by ID
-xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "1,2,3,4,6" --env test -v
 
 # Skip confirmation prompt with --confirm flag
-xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "*" --confirm --env test -v
 ```
 
@@ -157,4 +171,4 @@ xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
 - Accepted upload formats: `.zip`, `.tar`, `.tar.gz`, `.tgz`. `upload-dicom` also accepts a directory and will zip it temporarily.
 - Session downloads are parallelized and show byte-progress logs if `-v` is set.
 - Environment variables can be exported directly instead of `.env` if preferred.
-- Use `--env dev` to load `.env.dev` instead of `.env` for different environments.
+- Use `--env dev` to load `.env.dev` instead of `.env`, `--env test` to load `.env.test`, `--env prod` to load `.env.prod`.
