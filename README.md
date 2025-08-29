@@ -1,70 +1,65 @@
 # XNAT IO
 
-CLI utilities for interacting with CAMH XNAT instance as an admin.
+CLI utilities for interacting with CAMH XNAT instance with focus on admin use cases.
 
 Inspired by [niptools](https://gitlab.camh.ca/xnat/niptools).
 
 ## Install
 
-- Recommended: install from the GitLab Package Registry.
-- Alternative: use pipx for an isolated CLI, or install from source.
-
-### A) GitLab Package Registry (recommended)
-
-1) Get the project ID from the GitLab project sidebar. Example: `12345`.
-
-2) Get credentials:
-- Deploy Token (recommended): scope `read_package_registry`. Use the provided username `gitlab+deploy-token-<id>` and the token as the password.
-- Or a Personal Access Token: scope `read_api`. Use username `oauth2` and the token as the password.
-
-3) Install (inline credentials):
+### From Source (Recommended)
 
 ```bash
-pip install \
-  --index-url https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple \
-  --extra-index-url https://pypi.org/simple \
-  xnatio
+git clone https://gitlab.camh.ca/xnat/xnatio.git
+cd xnatio
+pip install .
 ```
 
-Or configure pip once and then install:
+### For Development
 
 ```bash
-pip config set global.index-url "https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple"
-pip config set global.extra-index-url "https://pypi.org/simple"
+git clone https://gitlab.camh.ca/xnat/xnatio.git
+cd xnatio
 
-pip install xnatio
-```
-
-Replace `USERNAME`/`PASSWORD` and `PROJECT_ID` as described above.
-
-### B) pipx (isolated CLI)
-
-```bash
-pipx install \
-  --index-url https://USERNAME:PASSWORD@gitlab.camh.ca/api/v4/projects/PROJECT_ID/packages/pypi/simple \
-  --extra-index-url https://pypi.org/simple \
-  xnatio
-
-# Use
-xnatio --help
-```
-
-### C) From source
-
-Using uv (fast):
-
-```bash
+# Option 1: Using uv (fast)
 uv sync
 uv run xnatio --help
-```
 
-Using pip (virtualenv recommended):
-
-```bash
+# Option 2: Using pip with virtual environment
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -e .
 xnatio --help
+```
+
+### Using pipx (Isolated Installation)
+
+```bash
+git clone https://gitlab.camh.ca/xnat/xnatio.git
+cd xnatio
+pipx install .
+xnatio --help
+```
+
+## Programmatic Usage
+
+You can also use xnatio as a Python library:
+
+```python
+from xnatio import XNATClient, load_config
+
+# Load configuration from .env file
+config = load_config()
+
+# Create XNAT client
+client = XNATClient.from_config(config)
+
+# Use client methods
+client.upload_dicom_zip(
+    archive_path,
+    project="PROJECT_ID", 
+    subject="SUBJECT_ID",
+    session="SESSION_ID"
+)
 ```
 
 ## Configure
@@ -80,7 +75,7 @@ XNAT_VERIFY_TLS=true
 ```
 
 - Set `XNAT_VERIFY_TLS=false` for dev servers with self-signed or untrusted certs.
-- Use `--env dev` to load `.env.dev` instead of `.env`.
+- Use `--env dev` to load `.env.dev` instead of `.env`, `--env test` to load `.env.test`, `--env prod` to load `.env.prod`.
 
 ## CLI
 
@@ -96,13 +91,13 @@ XNAT_VERIFY_TLS=true
 ### Help
 
 ```bash
-uv run xnatio --help
-uv run xnatio upload-dicom --help
-uv run xnatio download-session --help
-uv run xnatio extract-session --help
-uv run xnatio upload-resource --help
-uv run xnatio create-project --help
-uv run xnatio delete-scans --help
+xnatio --help
+xnatio upload-dicom --help
+xnatio download-session --help
+xnatio extract-session --help
+xnatio upload-resource --help
+xnatio create-project --help
+xnatio delete-scans --help
 ```
 
 ### Examples
@@ -110,65 +105,56 @@ uv run xnatio delete-scans --help
 Upload a DICOM session from an archive:
 
 ```bash
-uv run xnatio upload-dicom NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+xnatio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   /path/to/ARCHIVE.zip --env test -v
 ```
 
 Upload a DICOM session from a directory (auto-zipped to a temporary file first):
 
 ```bash
-uv run xnatio upload-dicom NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+xnatio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   /path/to/dicom_dir --env test -v
 ```
 
 Download a session into `outdir/SESSION_LABEL`, include assessors/recons, unzip and remove zips:
 
 ```bash
-uv run xnatio download-session NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR outdir \
+xnatio download-session TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR outdir \
   --include-assessors --include-recons --unzip --env dev -v
+```
+
+Upload a directory as a session resource (zipped and extracted server-side):
+
+```bash
+xnatio upload-resource TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+  BIDS /path/to/bids_directory --env test -v
 ```
 
 Delete scans for a session:
 
 ```bash
 # Delete all scans (interactive confirmation required)
-uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "*" --env test -v
 
 # Delete specific scans by ID
-uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "1,2,3,4,6" --env test -v
 
 # Skip confirmation prompt with --confirm flag
-uv run xnatio delete-scans NAT01_ROM NAT01_ROM_00000001 NAT01_ROM_00000001_01_SE01_MR \
+xnatio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
   --scan "*" --confirm --env test -v
 ```
 
-### Install from GitLab Package Registry
+## Requirements
 
-Once CI publishes a release (tag), users can install directly from the GitLab Python registry:
-
-```bash
-pip install --index-url https://gitlab.camh.ca/api/v4/projects/<PROJECT_ID>/packages/pypi/simple \
-            --extra-index-url https://pypi.org/simple \
-            xnatio==0.1.0
-```
-
-Or configure `~/.pip/pip.conf` or `~/.pypirc` to point to the GitLab index URL and then `pip install xnatio`.
-
-### Publishing (maintainers)
-
-- Push a tag (e.g., `v0.1.0`) to trigger the publish job:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The pipeline builds wheels/sdist and uploads them to the project’s GitLab Package Registry using the CI job token.
+- Python 3.8 or higher
+- Access to an XNAT server
+- Valid XNAT credentials
 
 ## Notes
 
 - Accepted upload formats: `.zip`, `.tar`, `.tar.gz`, `.tgz`. `upload-dicom` also accepts a directory and will zip it temporarily.
 - Session downloads are parallelized and show byte-progress logs if `-v` is set.
 - Environment variables can be exported directly instead of `.env` if preferred.
+- Use `--env dev` to load `.env.dev` instead of `.env` for different environments.
