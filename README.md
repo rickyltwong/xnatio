@@ -1,15 +1,15 @@
 # XNAT IO
 
-CLI utilities for interacting with CAMH XNAT instance with focus on admin use cases.
+CLI utilities for interacting with an XNAT instance with a focus on admin use cases.
 
-Inspired by [niptools](https://gitlab.camh.ca/xnat/niptools).
+Inspired by existing XNAT tooling.
 
 ## Install
 
 ### From Source (Recommended)
 
 ```bash
-git clone https://gitlab.camh.ca/xnat/xnatio.git
+git clone https://github.com/your-org/xnatio.git
 cd xnatio
 pip install .
 
@@ -22,7 +22,7 @@ xio --help
 ### For Development
 
 ```bash
-git clone https://gitlab.camh.ca/xnat/xnatio.git
+git clone https://github.com/your-org/xnatio.git
 cd xnatio
 
 # Option 1: Using uv (fast)
@@ -39,7 +39,7 @@ xnatio --help
 ### Using pipx (Isolated Installation)
 
 ```bash
-git clone https://gitlab.camh.ca/xnat/xnatio.git
+git clone https://github.com/your-org/xnatio.git
 cd xnatio
 pipx install .
 xnatio --help
@@ -115,32 +115,32 @@ xnatio delete-scans --help
 Upload a DICOM session from an archive:
 
 ```bash
-xnatio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xnatio upload-dicom DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   /path/to/ARCHIVE.zip --env test -v
 
 # or using the shorter alias:
-xio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio upload-dicom DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   /path/to/ARCHIVE.zip --env test -v
 ```
 
 Upload a DICOM session from a directory (auto-zipped to a temporary file first):
 
 ```bash
-xio upload-dicom TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio upload-dicom DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   /path/to/dicom_dir --env test -v
 ```
 
 Download a session into `outdir/SESSION_LABEL`, include assessors/recons, unzip and remove zips:
 
 ```bash
-xio download-session TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR outdir \
+xio download-session DEMO_PRJ DEMO_SUBJ DEMO_SESS outdir \
   --include-assessors --include-recons --unzip --env dev -v
 ```
 
 Upload a directory as a session resource (zipped and extracted server-side):
 
 ```bash
-xio upload-resource TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio upload-resource DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   BIDS /path/to/bids_directory --env test -v
 ```
 
@@ -148,15 +148,15 @@ Delete scans for a session:
 
 ```bash
 # Delete all scans (interactive confirmation required)
-xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   --scan "*" --env test -v
 
 # Delete specific scans by ID
-xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   --scan "1,2,3,4,6" --env test -v
 
 # Skip confirmation prompt with --confirm flag
-xio delete-scans TST01_CMH TST01_CMH_00000001 TST01_CMH_00000001_01_SE01_MR \
+xio delete-scans DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   --scan "*" --confirm --env test -v
 ```
 

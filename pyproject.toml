@@ -5,12 +5,10 @@ description = "CLI utilities for interacting with XNAT instance with focus on ad
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "Ricky Wong", email = "ricky.wong@camh.ca"}
+    {name = "Ricky Wong", email = "rickywonglt15@outlook.com"}
 ]
 license = {text = "MIT"}
-homepage = "https://gitlab.camh.ca/xnat/xnatio"
-repository = "https://gitlab.camh.ca/xnat/xnatio.git"
-keywords = ["xnat", "dicom", "neuroimaging", "cli", "camh"]
+keywords = ["xnat", "dicom", "neuroimaging", "cli"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research", 
@@ -35,6 +33,10 @@ dependencies = [
 [project.scripts]
 xnatio = "xnatio.cli:run_cli"
 xio = "xnatio.cli:run_cli"
+
+[project.urls]
+homepage = "https://github.com/rickyltwong/xnatio"
+repository = "https://github.com/rickyltwong/xnatio.git"
 
 [tool.uv]
 package = true

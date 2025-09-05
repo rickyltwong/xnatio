@@ -182,7 +182,7 @@ class XNATClient:
         """
         log = logging.getLogger(archive.name)
         self.ensure_subject(project, subject, auto_create=True)
-        self.ensure_session(project, subject, session)
+        # self.ensure_session(project, subject, session)
 
         imp_url = f"{self.server}/data/services/import"
         log.info(
