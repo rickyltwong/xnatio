@@ -2,14 +2,29 @@
 
 CLI utilities for interacting with an XNAT instance with a focus on admin use cases.
 
-Inspired by existing XNAT tooling.
+Inspired by niptools 
 
 ## Install
+
+### From GitHub (pip, no clone)
+
+```bash
+# Latest from main
+python -m pip install "xnatio @ git+https://github.com/rickyltwong/xnatio.git@main"
+
+# Or pin to a tag (recommended once you create one)
+python -m pip install "xnatio @ git+https://github.com/rickyltwong/xnatio.git@v0.1.0"
+
+# Test the installation
+xnatio --help
+# or use the shorter alias:
+xio --help
+```
 
 ### From Source (Recommended)
 
 ```bash
-git clone https://github.com/your-org/xnatio.git
+git clone https://github.com/rickyltwong/xnatio.git
 cd xnatio
 pip install .
 
@@ -22,7 +37,7 @@ xio --help
 ### For Development
 
 ```bash
-git clone https://github.com/your-org/xnatio.git
+git clone https://github.com/rickyltwong/xnatio.git
 cd xnatio
 
 # Option 1: Using uv (fast)
@@ -39,9 +54,10 @@ xnatio --help
 ### Using pipx (Isolated Installation)
 
 ```bash
-git clone https://github.com/your-org/xnatio.git
-cd xnatio
-pipx install .
+# No clone (install directly from GitHub)
+pipx install "xnatio@git+https://github.com/rickyltwong/xnatio.git@main"
+# Or pin to a tag (recommended once you create one)
+pipx install "xnatio@git+https://github.com/rickyltwong/xnatio.git@v0.1.0"
 xnatio --help
 ```
 

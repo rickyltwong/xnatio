@@ -5,20 +5,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Sequence
 from urllib.parse import quote
-
-import requests
 from pyxnat import Interface
 import zipfile
 import tempfile
-from xml.etree.ElementTree import Element, SubElement, tostring
 
 
 class XNATClient:
     """High-level client for interacting with an XNAT server.
 
-    This class wraps a `pyxnat.Interface` for authenticated API access and also
-    maintains a `requests.Session` for direct HTTP endpoints not covered by
-    `pyxnat` (e.g., import service, bulk zip downloads).
+    This class wraps a `pyxnat.Interface` for authenticated API access. It uses
+    the object API for metadata CRUD and the Interface HTTP wrappers for endpoints
+    and streaming operations (e.g., import service, bulk zip downloads).
 
     Use `XNATClient.from_config` to construct from the project's .env config.
     """
@@ -30,7 +27,7 @@ class XNATClient:
         password: str,
         *,
         verify_tls: bool = True,
-        http_timeouts: Tuple[int, int] = (60, 72000),
+        http_timeouts: Tuple[int, int] = (120, 604800),
         logger: Optional[logging.Logger] = None,
     ):
         """Create a new XNAT client.
@@ -52,13 +49,13 @@ class XNATClient:
 
         # Authenticated XNAT interface
         self.interface: Interface = Interface(
-            server=self.server, user=self.username, password=self.password
+            server=self.server,
+            user=self.username,
+            password=self.password,
+            verify=self.verify_tls,
         )
 
-        # Reusable HTTP session for endpoints not abstracted by pyxnat
-        self.http = requests.Session()
-        self.http.auth = (self.username, self.password)
-        self.http.verify = self.verify_tls
+        # All HTTP requests go through the pyxnat Interface wrappers
 
     @classmethod
     def from_config(cls, cfg: Dict[str, object]) -> "XNATClient":
@@ -76,37 +73,17 @@ class XNATClient:
     def create_project(
         self, project_id: str, description: Optional[str] = None
     ) -> None:
-        """Create a new project using XNAT REST API.
-
-        This sends an XML document to POST /data/projects with required
-        fields ID, secondary_ID, and name set to the same provided value.
-        Optionally sets description if provided.
-
-        Treats HTTP 200/201 as success, and 409 (already exists) as a no-op success.
-        """
-        ns = "http://nrg.wustl.edu/xnat"
-        root = Element(f"{{{ns}}}projectData")
-        SubElement(root, f"{{{ns}}}ID").text = project_id
-        SubElement(root, f"{{{ns}}}secondary_ID").text = project_id
-        SubElement(root, f"{{{ns}}}name").text = project_id
+        """Create a new project using pyxnat object API if missing; set description."""
+        project = self.interface.select.project(project_id)
+        if not project.exists():
+            project.insert()
+            self.log.info(f"Project created: {project_id}")
         if description:
-            SubElement(root, f"{{{ns}}}description").text = description
-
-        xml_body = tostring(root, encoding="utf-8", xml_declaration=True)
-        url = f"{self.server}/data/projects"
-        r = self.http.post(
-            url,
-            data=xml_body,
-            headers={"Content-Type": "application/xml"},
-            timeout=self.http_timeouts,
-        )
-        if r.status_code in (200, 201):
-            self.log.info(f"Project create OK ({r.status_code})")
-            return
-        if r.status_code == 409:
-            self.log.info("Project already exists (409)")
-            return
-        r.raise_for_status()
+            try:
+                project.attrs.set("xnat:projectData/description", description)
+            except Exception:
+                # Some XNAT versions restrict description updates; ignore errors silently
+                pass
 
     def ensure_subject(
         self, project: str, subject: str, *, auto_create: bool = True
@@ -121,11 +98,11 @@ class XNATClient:
                 f"Subject creation disabled but may be needed for {subject}"
             )
 
-        subject_path = f"/data/projects/{project}/subjects/{subject}"
+        subj = self.interface.select.project(project).subject(subject)
         try:
-            self.interface.put(subject_path)
+            if not subj.exists():
+                subj.insert()
         except Exception:
-            # Best-effort; subject may already exist.
             pass
 
     def ensure_session(self, project: str, subject: str, session: str) -> None:
@@ -133,14 +110,127 @@ class XNATClient:
 
         Best-effort creation; no error if it already exists.
         """
-        session_path = (
-            f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        sess = (
+            self.interface.select.project(project).subject(subject).experiment(session)
         )
         try:
-            # Create MR session by default; XNAT will upsert if existing
-            self.interface.put(session_path, params={"xsiType": "xnat:mrSessionData"})
+            if not sess.exists():
+                # Create MR session by default
+                sess.insert(experiments="xnat:mrSessionData")
         except Exception:
             pass
+
+    def test_connection(self) -> str:
+        """Return XNAT version string to validate connectivity.
+
+        Queries ``/xapi/siteConfig/buildInfo`` and returns the ``version`` field
+        or ``"unknown"`` if not present.
+        """
+        r = self.interface.get("/xapi/siteConfig/buildInfo", timeout=self.http_timeouts)
+        r.raise_for_status()
+        data = r.json() or {}
+        return data.get(
+            "version",
+            "Version data not available, please verify manually and troubleshoot if needed.",
+        )
+
+    def add_scan(
+        self,
+        project: str,
+        subject: str,
+        session: str,
+        *,
+        xsi_type: str = "xnat:mrScanData",
+        scan_type: Optional[str] = None,
+        params: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Create a scan under an image session with the next numeric scan ID.
+
+        - Computes next ID as max(existing IDs) + 1; uses "1" if none exist.
+        - ``xsi_type`` is required by XNAT (default: xnat:mrScanData).
+        - Optional ``scan_type`` sets ``{xsi_type}/type`` (e.g., T1, T2).
+        - ``params`` can include additional Scan Data REST XML Path parameters.
+
+        Returns the new scan ID as a string.
+        """
+        # Best-effort ensure existence of container entities
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
+
+        # 1) List existing scans to determine next ID
+        sess = (
+            self.interface.select.project(project).subject(subject).experiment(session)
+        )
+        scans_coll = sess.scans()
+        try:
+            scan_ids = scans_coll.get("ID")
+        except Exception:
+            scan_ids = scans_coll.get()
+        existing_ids: list[int] = []
+        for sid in scan_ids or []:
+            try:
+                existing_ids.append(int(str(sid)))
+            except Exception:
+                continue
+        next_id = (max(existing_ids) + 1) if existing_ids else 1
+        scan_id = str(next_id)
+
+        # 2) Create the scan with required xsiType and optional params
+        scan_obj = sess.scan(scan_id)
+        # Create scan (no-op if exists)
+        if not scan_obj.exists():
+            scan_obj.insert(scans=xsi_type)
+        # Optionally set type and any additional attributes
+        try:
+            if scan_type:
+                scan_obj.attrs.set(f"{xsi_type}/type", scan_type)
+            if params:
+                scan_obj.attrs.mset(params)
+        except Exception:
+            pass
+        self.log.info(f"Created scan {scan_id} in session {session}")
+        return scan_id
+
+    def upload_scan_resource(
+        self,
+        *,
+        project: str,
+        subject: str,
+        session: str,
+        scan_id: str,
+        resource_label: str,
+        file_path: Path,
+        remote_name: Optional[str] = None,
+    ) -> None:
+        """Upload a single file to a scan resource using one PUT with inbody=true.
+
+        If ``remote_name`` is not provided, the local filename is used.
+        """
+        if not file_path.exists() or not file_path.is_file():
+            raise ValueError(f"File not found: {file_path}")
+
+        # Best-effort ensure project containers exist; scan is assumed to exist
+        self.ensure_subject(project, subject, auto_create=True)
+        self.ensure_session(project, subject, session)
+
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}/scans/{quote(str(scan_id))}"
+        remote = quote(remote_name or file_path.name)
+        url = f"{base}/resources/{quote(resource_label)}/files/{remote}?inbody=true"
+
+        log = logging.getLogger(f"{session}:{scan_id}:{resource_label}")
+        size_mb = file_path.stat().st_size / (1024 * 1024)
+        log.info(
+            f"Uploading file {file_path} ({size_mb:.1f} MB) → scan {scan_id} resource {resource_label}/{remote}"
+        )
+        with open(file_path, "rb") as f:
+            r = self.interface.put(
+                url,
+                data=f,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=self.http_timeouts,
+            )
+        r.raise_for_status()
+        log.info(f"Scan resource file upload OK ({r.status_code})")
 
     def upload_dicom_zip(
         self,
@@ -184,7 +274,7 @@ class XNATClient:
         self.ensure_subject(project, subject, auto_create=True)
         # self.ensure_session(project, subject, session)
 
-        imp_url = f"{self.server}/data/services/import"
+        imp_url = "/data/services/import"
         log.info(
             f"Starting upload of {archive.name} ({archive.stat().st_size / (1024 * 1024 * 1024):.1f} GB); direct-archive option: {direct_archive}"
         )
@@ -219,12 +309,11 @@ class XNATClient:
         with open(archive, "rb") as f:
             files = {"file": (archive.name, f)}
 
-            resp = self.http.post(
+            resp = self.interface.post(
                 imp_url,
                 params=params,
-                files=files,  # multipart form data
+                files=files,
                 timeout=self.http_timeouts,
-                stream=True,
             )
             resp.raise_for_status()
             log.info(f"DICOM import OK ({resp.status_code})")
@@ -252,7 +341,7 @@ class XNATClient:
 
         log = logging.getLogger(f"{session}:{resource_label}")
         log.info(f"Uploading directory {local_dir} → resource {resource_label}")
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         uploaded = 0
         failed = 0
         for path in sorted(local_dir.rglob("*")):
@@ -262,12 +351,11 @@ class XNATClient:
             url = f"{base}/resources/{quote(resource_label)}/files/{quote(rel_path)}?inbody=true"
             try:
                 with open(path, "rb") as f:
-                    r = self.http.put(
+                    r = self.interface.put(
                         url,
                         data=f,
                         headers={"Content-Type": "application/octet-stream"},
                         timeout=self.http_timeouts,
-                        stream=True,
                     )
                 if r.status_code in (200, 201):
                     uploaded += 1
@@ -302,7 +390,7 @@ class XNATClient:
         self.ensure_subject(project, subject, auto_create=True)
         self.ensure_session(project, subject, session)
 
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         zip_name = zip_name or f"{resource_label}.zip"
         url = (
             f"{base}/resources/{quote(resource_label)}/files/{quote(zip_name)}"
@@ -327,12 +415,11 @@ class XNATClient:
 
         try:
             with open(tmp_zip, "rb") as f:
-                r = self.http.put(
+                r = self.interface.put(
                     url,
                     data=f,
                     headers={"Content-Type": "application/zip"},
                     timeout=self.http_timeouts,
-                    stream=True,
                 )
             r.raise_for_status()
             log.info(f"Extract upload OK ({r.status_code})")
@@ -348,7 +435,7 @@ class XNATClient:
         Logs cumulative bytes downloaded periodically and on completion when INFO logging is enabled.
         """
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.http.get(url, stream=True, timeout=(30, 7200)) as r:
+        with self.interface.get(url, stream=True, timeout=self.http_timeouts) as r:
             r.raise_for_status()
             with open(out_path, "wb") as f:
                 total = 0
@@ -371,7 +458,7 @@ class XNATClient:
         self, project: str, subject: str, session: str, out_dir: Path
     ) -> Path:
         """Download all scan files for a session as a single ZIP (scans.zip)."""
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         out = out_dir / "scans.zip"
         self._download_stream(f"{base}/scans/ALL/files?format=zip", out)
         return out
@@ -386,14 +473,16 @@ class XNATClient:
           session_resources_<label>.zip
         Returns the directory path containing the downloaded zips.
         """
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
-        # 1) list resources
-        list_url = f"{base}/resources?format=json"
-        resp = self.http.get(list_url, timeout=(30, 120))
-        resp.raise_for_status()
-        data = resp.json()
-        results = (data or {}).get("ResultSet", {}).get("Result", [])
-        labels = [r.get("label") for r in results if r.get("label")]
+        # 1) list resources using object API
+        sess = (
+            self.interface.select.project(project).subject(subject).experiment(session)
+        )
+        try:
+            labels = sess.resources().get("label")
+        except Exception:
+            # Fallback if label accessor is not supported; fetch all and extract names
+            labels = [r for r in (sess.resources().get() or [])]
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         # 2) download each resource
         for label in labels:
             label_q = quote(label)
@@ -419,7 +508,7 @@ class XNATClient:
         """
         if kind not in {"assessors", "reconstructions"}:
             raise ValueError("kind must be 'assessors' or 'reconstructions'")
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         name = (
             "assessor_resources.zip" if kind == "assessors" else "recon_resources.zip"
         )
@@ -534,7 +623,7 @@ class XNATClient:
         self.ensure_subject(project, subject, auto_create=True)
         self.ensure_session(project, subject, session)
 
-        base = f"{self.server}/data/projects/{project}/subjects/{subject}/experiments/{session}"
+        base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         remote = quote(remote_name or file_path.name)
         url = f"{base}/resources/{quote(resource_label)}/files/{remote}?inbody=true"
         log = logging.getLogger(f"{session}:{resource_label}")
@@ -543,12 +632,11 @@ class XNATClient:
             f"Uploading file {file_path} ({size_mb:.1f} MB) → {resource_label}/{remote}"
         )
         with open(file_path, "rb") as f:
-            r = self.http.put(
+            r = self.interface.put(
                 url,
                 data=f,
                 headers={"Content-Type": "application/octet-stream"},
                 timeout=self.http_timeouts,
-                stream=True,
             )
         r.raise_for_status()
         log.info(f"File upload OK ({r.status_code})")
@@ -579,20 +667,18 @@ class XNATClient:
                 f"Deleting scans {', '.join(scan_ids)} for {project}/{subject}/{session}"
             )
 
-        # First, get list of available scans for this session
-        session_path = (
-            f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
-        )
-        scans_url = f"{session_path}/scans?format=json"
-
+        # First, get list of available scans for this session via object API
         try:
-            resp = self.http.get(f"{self.server}{scans_url}", timeout=(30, 120))
-            resp.raise_for_status()
-            data = resp.json()
-
-            # Extract available scan IDs from the response
-            results = (data or {}).get("ResultSet", {}).get("Result", [])
-            available_scan_ids = [r.get("ID") for r in results if r.get("ID")]
+            sess = (
+                self.interface.select.project(project)
+                .subject(subject)
+                .experiment(session)
+            )
+            scans_coll = sess.scans()
+            try:
+                available_scan_ids = scans_coll.get("ID") or []
+            except Exception:
+                available_scan_ids = scans_coll.get() or []
 
             if not available_scan_ids:
                 self.log.info(f"No scans found for {project}/{subject}/{session}")
@@ -621,16 +707,12 @@ class XNATClient:
                 f"Will delete {len(scans_to_delete)} scans: {', '.join(scans_to_delete)}"
             )
 
-            # Delete each scan using HTTP session (respects SSL settings)
+            # Delete each scan using object API
             deleted_scans = []
             for scan_id in scans_to_delete:
                 try:
-                    scan_url = f"{self.server}{session_path}/scans/{scan_id}"
                     self.log.info(f"Deleting scan {scan_id}...")
-
-                    # Use HTTP session DELETE request (respects verify_tls setting)
-                    resp = self.http.delete(scan_url, timeout=(30, 120))
-                    resp.raise_for_status()
+                    sess.scan(scan_id).delete(delete_files=True)
                     deleted_scans.append(scan_id)
                     self.log.info(f"✓ Deleted scan {scan_id}")
 
