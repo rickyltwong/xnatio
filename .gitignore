@@ -4,6 +4,9 @@
 .env.test
 .env.prod
 
+scripts/
+!scripts/build_xnatio.sh
+
 # Python cache/bytecode
 __pycache__/
 *.py[cod]
