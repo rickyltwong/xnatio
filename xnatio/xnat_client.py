@@ -641,6 +641,26 @@ class XNATClient:
         r.raise_for_status()
         log.info(f"File upload OK ({r.status_code})")
 
+    def list_scans(
+        self,
+        project: str,
+        subject: str,
+        session: str,
+    ) -> list[str]:
+        """Return the list of scan IDs for a given session.
+
+        Uses the object API to enumerate scans and normalizes IDs to strings.
+        """
+        sess = (
+            self.interface.select.project(project).subject(subject).experiment(session)
+        )
+        scans_coll = sess.scans()
+        try:
+            ids = scans_coll.get("ID") or []
+        except Exception:
+            ids = scans_coll.get() or []
+        return [str(s) for s in ids]
+
     def delete_scans(
         self,
         project: str,
@@ -669,16 +689,7 @@ class XNATClient:
 
         # First, get list of available scans for this session via object API
         try:
-            sess = (
-                self.interface.select.project(project)
-                .subject(subject)
-                .experiment(session)
-            )
-            scans_coll = sess.scans()
-            try:
-                available_scan_ids = scans_coll.get("ID") or []
-            except Exception:
-                available_scan_ids = scans_coll.get() or []
+            available_scan_ids = self.list_scans(project, subject, session)
 
             if not available_scan_ids:
                 self.log.info(f"No scans found for {project}/{subject}/{session}")
@@ -712,7 +723,9 @@ class XNATClient:
             for scan_id in scans_to_delete:
                 try:
                     self.log.info(f"Deleting scan {scan_id}...")
-                    sess.scan(scan_id).delete(delete_files=True)
+                    self.interface.select.project(project).subject(subject).experiment(
+                        session
+                    ).scan(scan_id).delete(delete_files=True)
                     deleted_scans.append(scan_id)
                     self.log.info(f"✓ Deleted scan {scan_id}")
 

@@ -167,6 +167,25 @@ def build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
 
+    # New: list-scans
+    list_scans = subparsers.add_parser(
+        "list-scans",
+        help="List scan IDs for a given project, subject, and session",
+    )
+    list_scans.add_argument("project", help="Project ID")
+    list_scans.add_argument("subject", help="Subject ID")
+    list_scans.add_argument("session", help="Session/experiment ID")
+    list_scans.add_argument(
+        "--env",
+        dest="env_file",
+        type=Path,
+        default=None,
+        help="Path to .env file that overrides environment variables",
+    )
+    list_scans.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
     return parser
 
 
@@ -314,6 +333,16 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         else:
             print("No scans were deleted.")
 
+        return 0
+
+    if args.command == "list-scans":
+        cfg = load_config(args.env_file)
+        client = XNATClient.from_config(cfg)
+        ids = client.list_scans(
+            project=args.project, subject=args.subject, session=args.session
+        )
+        if ids:
+            print("\n".join(ids))
         return 0
 
     # If we get here, command was not recognized
