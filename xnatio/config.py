@@ -1,45 +1,8 @@
 import os
-import sys
 from pathlib import Path
 from typing import Dict, Optional
 
 from dotenv import load_dotenv
-
-
-def _project_root() -> Path:
-    """
-    Get the project root directory.
-    When running from PyInstaller bundle, look in current working directory.
-    When running from source, use the parent directory of this file.
-    """
-    # Check if running from PyInstaller bundle
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # Running from PyInstaller bundle - look in current working directory
-        # or alongside the executable
-        if Path.cwd().name == "xnatio" or (Path.cwd() / "xnatio").exists():
-            return Path.cwd()
-        # Look alongside the executable
-        exe_dir = Path(sys.executable).parent
-        if (exe_dir / ".env").exists() or any(
-            (exe_dir / f".env.{env}").exists() for env in ["test", "dev", "prod"]
-        ):
-            return exe_dir
-        # Default to current working directory
-        return Path.cwd()
-    else:
-        # Running from source - use parent directory of this file
-        return Path(__file__).resolve().parents[1]
-
-
-def _dotenv_path(env_name: Optional[str]) -> Path:
-    root = _project_root()
-    if env_name and env_name.lower() in {"test", "testing"}:
-        return root / ".env.test"
-    if env_name and env_name.lower() in {"prod", "production"}:
-        return root / ".env.prod"
-    if env_name and env_name.lower() in {"dev", "development"}:
-        return root / ".env.dev"
-    return root / ".env"
 
 
 def _str_to_bool(value: Optional[str], default: bool = True) -> bool:
@@ -53,36 +16,33 @@ def _str_to_bool(value: Optional[str], default: bool = True) -> bool:
     return default
 
 
-def load_config(env_name: Optional[str] = None) -> Dict[str, object]:
+def load_config(env_path: Optional[Path] = None) -> Dict[str, object]:
     """
-    Load configuration from .env or .env.dev into a normalized dict used by the app.
+    Load configuration from environment variables, optionally overriding from a .env file.
 
-    Expected variables in the .env file:
+    Behavior:
+    - If env_path is provided, load that .env file with override=True (it overrides OS env).
+    - Else, if a .env exists in the current working directory, load it with override=False.
+    - Finally, read variables from the environment.
+
+    Required variables:
       - XNAT_SERVER
       - XNAT_USERNAME
       - XNAT_PASSWORD
-      - XNAT_VERIFY_TLS (optional, default True)
+    Optional variables:
+      - XNAT_VERIFY_TLS (default True)
     """
-    # Allow environment variable to choose the env file if not provided explicitly
-    env_name = env_name or os.getenv("XNATIO_ENV") or os.getenv("ENV")
-
-    dotenv_file = _dotenv_path(env_name)
-    if dotenv_file.exists():
-        load_dotenv(dotenv_file)
+    # Explicit env file overrides current environment
+    if env_path:
+        p = Path(env_path).expanduser()
+        if not p.exists():
+            raise FileNotFoundError(f"Environment file not found: {p}")
+        load_dotenv(p, override=True)
     else:
-        # Provide helpful error message with search locations
-        root = _project_root()
-        bundled = getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")
-        search_info = (
-            f"current directory: {Path.cwd()}" if bundled else f"project root: {root}"
-        )
-
-        raise FileNotFoundError(
-            f"Environment file not found: {dotenv_file}\n"
-            f"Searched in {search_info}\n"
-            f"Running from {'PyInstaller bundle' if bundled else 'source'}\n"
-            f"Please create the .env file with XNAT_SERVER, XNAT_USERNAME, and XNAT_PASSWORD"
-        )
+        # Load default .env from CWD if present, but do not override OS env
+        default_env = Path.cwd() / ".env"
+        if default_env.exists():
+            load_dotenv(default_env, override=False)
 
     server = os.getenv("XNAT_SERVER")
     user = os.getenv("XNAT_USERNAME")

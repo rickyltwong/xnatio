@@ -29,9 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upload.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     upload.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -47,9 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("output", type=Path, help="Output directory")
     dl.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     dl.add_argument(
         "--include-assessors",
@@ -79,9 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ex.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     ex.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -103,9 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     upres.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     upres.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -126,9 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create_proj.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     create_proj.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -153,9 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     delete_scans.add_argument(
         "--env",
-        dest="env_name",
+        dest="env_file",
+        type=Path,
         default=None,
-        help="Select .env file: default uses .env, pass 'dev' to use .env.dev",
+        help="Path to .env file that overrides environment variables",
     )
     delete_scans.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
@@ -174,7 +180,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
     )
 
     if args.command == "upload-dicom":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
 
         inp: Path = args.input
@@ -212,7 +218,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "download-session":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
         out_dir: Path = args.output
         client.download_session(
@@ -235,13 +241,13 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "extract-session":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
         client.extract_session_downloads(args.session_dir)
         return 0
 
     if args.command == "upload-resource":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
         p: Path = args.path
         if p.is_dir():
@@ -264,13 +270,13 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "create-project":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
         client.create_project(project_id=args.project_id, description=args.description)
         return 0
 
     if args.command == "delete-scans":
-        cfg = load_config(args.env_name)
+        cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
 
         # Parse scan IDs
