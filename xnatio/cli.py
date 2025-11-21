@@ -197,6 +197,32 @@ def build_parser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
 
+    refresh_catalogs = subparsers.add_parser(
+        "refresh-catalogs",
+        help="Refresh catalog XMLs for all experiments in a project",
+    )
+    refresh_catalogs.add_argument("project", help="Project ID")
+    refresh_catalogs.add_argument(
+        "--option",
+        action="append",
+        choices=["checksum", "delete", "append", "populateStats"],
+        help=(
+            "Refresh options (can be repeated). checksum: generate missing checksums; "
+            "delete: remove entries without files; append: add entries for new files; "
+            "populateStats: update resource stats"
+        ),
+    )
+    refresh_catalogs.add_argument(
+        "--env",
+        dest="env_file",
+        type=Path,
+        default=None,
+        help="Path to .env file that overrides environment variables",
+    )
+    refresh_catalogs.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+
     return parser
 
 
@@ -356,6 +382,20 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         )
         if ids:
             print("\n".join(ids))
+        return 0
+
+    if args.command == "refresh-catalogs":
+        cfg = load_config(args.env_file)
+        client = XNATClient.from_config(cfg)
+        refreshed = client.refresh_project_experiment_catalogs(
+            project=args.project, options=args.option
+        )
+        if refreshed:
+            print(f"Refreshed catalogs for {len(refreshed)} experiments:")
+            for exp_id in refreshed:
+                print(f"- {exp_id}")
+        else:
+            print("No experiments found to refresh.")
         return 0
 
     # If we get here, command was not recognized

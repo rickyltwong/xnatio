@@ -108,6 +108,8 @@ XNAT_VERIFY_TLS=true
 - **upload-resource**: Upload a local file or directory into a session resource. Directories are zipped locally and extracted server-side
 - **create-project**: Create a new project in XNAT (ID, secondary_ID, name set to the provided value)
 - **delete-scans**: Delete specific scan files or all scans for a given project, subject, and session (use with caution!)
+- **list-scans**: List scan IDs for a session
+- **refresh-catalogs**: Refresh catalog XMLs for all experiments in a project with optional checksum/delete/append/populateStats actions
 
 > **Tip**: You can use the shorter alias `xio` instead of `xnatio` for all commands (e.g., `xio --help`, `xio upload-dicom`, etc.)
 
@@ -124,6 +126,8 @@ xnatio extract-session --help
 xnatio upload-resource --help
 xnatio create-project --help
 xnatio delete-scans --help
+xnatio list-scans --help
+xnatio refresh-catalogs --help
 ```
 
 ### Examples
@@ -174,6 +178,9 @@ xio delete-scans DEMO_PRJ DEMO_SUBJ DEMO_SESS \
 # Skip confirmation prompt with --confirm flag
 xio delete-scans DEMO_PRJ DEMO_SUBJ DEMO_SESS \
   --scan "*" --confirm --env test -v
+
+# Refresh catalogs for all experiments in a project (e.g., add new files, compute checksums)
+xio refresh-catalogs DEMO_PRJ --option append --option checksum --env test -v
 ```
 
 ## Requirements

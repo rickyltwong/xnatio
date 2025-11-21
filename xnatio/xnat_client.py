@@ -642,6 +642,79 @@ class XNATClient:
         r.raise_for_status()
         log.info(f"File upload OK ({r.status_code})")
 
+    def refresh_project_experiment_catalogs(
+        self, project: str, options: Optional[list[str]] = None
+    ) -> list[str]:
+        """Refresh catalogs for all experiments in a project.
+
+        Queries experiments under the project (including their subjects) and
+        posts ``/data/services/refresh/catalog`` requests for each experiment
+        resource path (``/archive/projects/<project>/subjects/<subject>/experiments/<experiment>``).
+
+        Parameters
+        ----------
+        project: str
+            Project ID
+        options: list[str] | None
+            Optional refresh options (e.g., ``checksum``, ``delete``,
+            ``append``, ``populateStats``). Multiple entries are sent as a
+            comma-separated ``options`` query parameter.
+        """
+
+        # Fetch experiment + subject mapping for the project
+        resp = self.interface.get(
+            f"/data/projects/{project}/experiments",
+            params={"columns": "ID,subject_ID,label", "format": "json"},
+            timeout=self.http_timeouts,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        results = payload.get("ResultSet", {}).get("Result", []) or []
+
+        experiments: list[tuple[str, str]] = []
+        for entry in results:
+            exp_id = str(entry.get("ID") or entry.get("id") or entry.get("label") or "").strip()
+            subject_id = str(
+                entry.get("subject_ID")
+                or entry.get("subjectid")
+                or entry.get("subject_label")
+                or ""
+            ).strip()
+            if exp_id and subject_id:
+                experiments.append((subject_id, exp_id))
+
+        if not experiments:
+            self.log.info(f"No experiments found for project {project}")
+            return []
+
+        options_param = None
+        if options:
+            cleaned = [opt.strip() for opt in options if opt.strip()]
+            if cleaned:
+                options_param = ",".join(dict.fromkeys(cleaned))
+
+        refreshed: list[str] = []
+        for subject_id, exp_id in experiments:
+            resource_path = (
+                f"/archive/projects/{project}/subjects/{subject_id}/experiments/{exp_id}"
+            )
+            params = {"resource": resource_path}
+            if options_param:
+                params["options"] = options_param
+
+            r = self.interface.post(
+                "/data/services/refresh/catalog",
+                params=params,
+                timeout=self.http_timeouts,
+            )
+            r.raise_for_status()
+            self.log.info(
+                f"Refreshed catalog for experiment {exp_id} (subject {subject_id})"
+            )
+            refreshed.append(exp_id)
+
+        return refreshed
+
     def list_scans(
         self,
         project: str,
