@@ -50,3 +50,5 @@ htmlcov/
 
 # OS junk
 Thumbs.db
+
+.cursor

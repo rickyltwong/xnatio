@@ -157,6 +157,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip confirmation prompt (required for deletion)",
     )
     delete_scans.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Delete scans in parallel (faster for many scans)",
+    )
+    delete_scans.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Max worker threads when --parallel is used (default: 4)",
+    )
+    delete_scans.add_argument(
         "--env",
         dest="env_file",
         type=Path,
@@ -325,6 +336,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
             subject=args.subject,
             session=args.session,
             scan_ids=scan_ids,
+            parallel=args.parallel,
+            max_workers=args.max_workers,
         )
 
         if deleted_scans:

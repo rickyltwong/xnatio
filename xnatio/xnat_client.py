@@ -8,6 +8,7 @@ from urllib.parse import quote
 from pyxnat import Interface
 import zipfile
 import tempfile
+import re
 
 
 class XNATClient:
@@ -647,19 +648,43 @@ class XNATClient:
         subject: str,
         session: str,
     ) -> list[str]:
-        """Return the list of scan IDs for a given session.
+        """Return numeric scan IDs for a session as strings.
 
-        Uses the object API to enumerate scans and normalizes IDs to strings.
+        Prefers ``scans().get('ID')`` and falls back to parsing IDs from URIs/strings.
         """
         sess = (
             self.interface.select.project(project).subject(subject).experiment(session)
         )
         scans_coll = sess.scans()
+
+        ids: list[str] = []
         try:
-            ids = scans_coll.get("ID") or []
+            raw_ids = scans_coll.get("ID")
+            if raw_ids:
+                candidate = [str(i) for i in raw_ids]
+                if all(s.isdigit() for s in candidate):
+                    ids = candidate
         except Exception:
-            ids = scans_coll.get() or []
-        return [str(s) for s in ids]
+            pass
+
+        # Fallback: parse from generic listing
+        if not ids:
+            try:
+                raw_list = scans_coll.get() or []
+            except Exception:
+                raw_list = []
+            extracted: list[str] = []
+            for entry in raw_list:
+                s = str(entry)
+                m = re.search(r"/scans/(\d+)", s)
+                if m:
+                    extracted.append(m.group(1))
+                    continue
+                if s.isdigit():
+                    extracted.append(s)
+            ids = list(dict.fromkeys(extracted))
+
+        return ids
 
     def delete_scans(
         self,
@@ -667,6 +692,9 @@ class XNATClient:
         subject: str,
         session: str,
         scan_ids: Optional[list[str]] = None,
+        *,
+        parallel: bool = False,
+        max_workers: int = 2,
     ) -> list[str]:
         """
         Delete scan files for a given project, subject, and session.
@@ -676,6 +704,8 @@ class XNATClient:
         - subject: Subject ID
         - session: Session/experiment ID
         - scan_ids: List of specific scan IDs to delete, or None to delete all scans
+        - parallel: If True, delete scans in parallel (threaded)
+        - max_workers: Maximum parallel workers when parallel=True
 
         Returns:
         - List of scan IDs that were successfully deleted
@@ -719,19 +749,31 @@ class XNATClient:
             )
 
             # Delete each scan using object API
-            deleted_scans = []
-            for scan_id in scans_to_delete:
+            deleted_scans: list[str] = []
+
+            def _delete_one(sid: str) -> Optional[str]:
                 try:
-                    self.log.info(f"Deleting scan {scan_id}...")
+                    self.log.info(f"Deleting scan {sid}...")
                     self.interface.select.project(project).subject(subject).experiment(
                         session
-                    ).scan(scan_id).delete(delete_files=True)
-                    deleted_scans.append(scan_id)
-                    self.log.info(f"✓ Deleted scan {scan_id}")
-
+                    ).scan(sid).delete(delete_files=True)
+                    self.log.info(f"✓ Deleted scan {sid}")
+                    return sid
                 except Exception as e:
-                    self.log.error(f"✗ Failed to delete scan {scan_id}: {e}")
-                    continue
+                    self.log.error(f"✗ Failed to delete scan {sid}: {e}")
+                    return None
+
+            if parallel and len(scans_to_delete) > 1:
+                worker_count = max(1, min(max_workers, len(scans_to_delete)))
+                with ThreadPoolExecutor(max_workers=worker_count) as ex:
+                    for result in ex.map(_delete_one, scans_to_delete):
+                        if result:
+                            deleted_scans.append(result)
+            else:
+                for scan_id in scans_to_delete:
+                    result = _delete_one(scan_id)
+                    if result:
+                        deleted_scans.append(result)
 
             self.log.info(
                 f"Successfully deleted {len(deleted_scans)} out of {len(scans_to_delete)} scans"
