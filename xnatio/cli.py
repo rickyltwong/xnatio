@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,21 @@ from .utils import is_allowed_archive, zip_dir_to_temp
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return the argument parser for the xnatio CLI.
+
+    Creates a parser with subcommands for various XNAT operations including:
+    - upload-dicom: Upload DICOM archives or directories
+    - download-session: Download session data as ZIP files
+    - extract-session: Extract downloaded ZIP files
+    - upload-resource: Upload files/directories to session resources
+    - create-project: Create new XNAT projects
+    - delete-scans: Delete scans from sessions
+    - list-scans: List scan IDs for a session
+    - refresh-catalogs: Refresh catalog XMLs for project experiments
+
+    Returns:
+        Configured ArgumentParser instance with all subcommands.
+    """
     parser = argparse.ArgumentParser(prog="xnatio", description="XNAT CLI utilities")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -187,6 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
     list_scans.add_argument("subject", help="Subject ID")
     list_scans.add_argument("session", help="Session/experiment ID")
     list_scans.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format: text (default) or json for scripting",
+    )
+    list_scans.add_argument(
         "--env",
         dest="env_file",
         type=Path,
@@ -213,6 +235,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     refresh_catalogs.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Refresh experiments in parallel (faster for many experiments)",
+    )
+    refresh_catalogs.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        help="Max worker threads when --parallel is used (default: 4)",
+    )
+    refresh_catalogs.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format: text (default) or json for scripting",
+    )
+    refresh_catalogs.add_argument(
         "--env",
         dest="env_file",
         type=Path,
@@ -227,6 +266,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_cli(argv: Optional[list[str]] = None) -> int:
+    """Run the xnatio command-line interface.
+
+    Parses command-line arguments and executes the appropriate subcommand.
+    Configures logging based on verbosity flags and loads XNAT configuration
+    from environment variables or .env files.
+
+    Args:
+        argv: Optional list of command-line arguments. If None, sys.argv is used.
+
+    Returns:
+        Exit code (0 for success, non-zero for errors).
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -380,7 +431,9 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         ids = client.list_scans(
             project=args.project, subject=args.subject, session=args.session
         )
-        if ids:
+        if args.format == "json":
+            print(json.dumps({"scan_ids": ids, "count": len(ids)}))
+        elif ids:
             print("\n".join(ids))
         return 0
 
@@ -388,9 +441,22 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         cfg = load_config(args.env_file)
         client = XNATClient.from_config(cfg)
         refreshed = client.refresh_project_experiment_catalogs(
-            project=args.project, options=args.option
+            project=args.project,
+            options=args.option,
+            parallel=args.parallel,
+            max_workers=args.max_workers,
         )
-        if refreshed:
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "project": args.project,
+                        "experiments_refreshed": refreshed,
+                        "count": len(refreshed),
+                    }
+                )
+            )
+        elif refreshed:
             print(f"Refreshed catalogs for {len(refreshed)} experiments:")
             for exp_id in refreshed:
                 print(f"- {exp_id}")

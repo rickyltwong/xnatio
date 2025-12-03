@@ -1,14 +1,72 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Sequence
+from typing import Dict, Optional, Tuple, Sequence, Callable, TypeVar
 from urllib.parse import quote
 from pyxnat import Interface
 import zipfile
 import tempfile
 import re
+
+from .config import XNATConfig
+from .utils import zip_dir_to_temp
+
+T = TypeVar("T")
+
+
+def _retry_on_network_error(
+    fn: Callable[[], T],
+    max_retries: int = 4,
+    backoff_base: float = 2.0,
+    logger: Optional[logging.Logger] = None,
+) -> T:
+    """Execute a function with retry logic for transient network failures.
+
+    Retries the function up to max_retries times with exponential backoff
+    (2s, 4s, 8s, 16s by default) when network-related exceptions occur.
+
+    Args:
+        fn: The function to execute.
+        max_retries: Maximum number of retry attempts (default 4).
+        backoff_base: Base for exponential backoff in seconds (default 2.0).
+        logger: Optional logger for retry messages.
+
+    Returns:
+        The return value of fn if successful.
+
+    Raises:
+        The last exception if all retries fail.
+    """
+    import requests
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+            ConnectionResetError,
+            BrokenPipeError,
+            OSError,
+        ) as e:
+            last_exc = e
+            if attempt < max_retries:
+                wait_time = backoff_base ** (attempt + 1)
+                if logger:
+                    logger.warning(
+                        f"Network error (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                        f"Retrying in {wait_time:.1f}s..."
+                    )
+                time.sleep(wait_time)
+            else:
+                if logger:
+                    logger.error(f"Network error after {max_retries + 1} attempts: {e}")
+    raise last_exc  # type: ignore[misc]
 
 
 class XNATClient:
@@ -59,16 +117,25 @@ class XNATClient:
         # All HTTP requests go through the pyxnat Interface wrappers
 
     @classmethod
-    def from_config(cls, cfg: Dict[str, object]) -> "XNATClient":
-        """Construct a client from a dict loaded via .env.
+    def from_config(cls, cfg: XNATConfig) -> XNATClient:
+        """Construct a client from an XNATConfig loaded via load_config().
 
-        Expected keys in cfg: server, user, password.
+        Args:
+            cfg: Configuration dictionary with server, user, password, and optional
+                 verify_tls and timeout settings.
+
+        Returns:
+            A configured XNATClient instance.
         """
         return cls(
-            server=str(cfg["server"]),
-            username=str(cfg["user"]),
-            password=str(cfg["password"]),
-            verify_tls=bool(cfg.get("verify_tls", True)),
+            server=cfg["server"],
+            username=cfg["user"],
+            password=cfg["password"],
+            verify_tls=cfg.get("verify_tls", True),
+            http_timeouts=(
+                cfg.get("http_connect_timeout", 120),
+                cfg.get("http_read_timeout", 604800),
+            ),
         )
 
     def create_project(
@@ -82,9 +149,9 @@ class XNATClient:
         if description:
             try:
                 project.attrs.set("xnat:projectData/description", description)
-            except Exception:
-                # Some XNAT versions restrict description updates; ignore errors silently
-                pass
+            except Exception as e:
+                # Some XNAT versions restrict description updates
+                self.log.debug(f"Could not set project description: {e}")
 
     def ensure_subject(
         self, project: str, subject: str, *, auto_create: bool = True
@@ -103,8 +170,8 @@ class XNATClient:
         try:
             if not subj.exists():
                 subj.insert()
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug(f"Could not ensure subject {subject}: {e}")
 
     def ensure_session(self, project: str, subject: str, session: str) -> None:
         """Ensure a session exists for the subject in the project.
@@ -118,8 +185,8 @@ class XNATClient:
             if not sess.exists():
                 # Create MR session by default
                 sess.insert(experiments="xnat:mrSessionData")
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug(f"Could not ensure session {session}: {e}")
 
     def test_connection(self) -> str:
         """Return XNAT version string to validate connectivity.
@@ -165,7 +232,8 @@ class XNATClient:
         scans_coll = sess.scans()
         try:
             scan_ids = scans_coll.get("ID")
-        except Exception:
+        except Exception as e:
+            self.log.debug(f"Could not get scan IDs by 'ID' column, falling back: {e}")
             scan_ids = scans_coll.get()
         existing_ids: list[int] = []
         for sid in scan_ids or []:
@@ -187,8 +255,8 @@ class XNATClient:
                 scan_obj.attrs.set(f"{xsi_type}/type", scan_type)
             if params:
                 scan_obj.attrs.mset(params)
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug(f"Could not set scan attributes: {e}")
         self.log.info(f"Created scan {scan_id} in session {session}")
         return scan_id
 
@@ -392,43 +460,39 @@ class XNATClient:
         self.ensure_session(project, subject, session)
 
         base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
-        zip_name = zip_name or f"{resource_label}.zip"
+        remote_zip_name = zip_name or f"{resource_label}.zip"
         url = (
-            f"{base}/resources/{quote(resource_label)}/files/{quote(zip_name)}"
+            f"{base}/resources/{quote(resource_label)}/files/{quote(remote_zip_name)}"
             f"?extract=true&inbody=true"
         )
 
         log = logging.getLogger(f"{session}:{resource_label}")
-        log.info(f"Creating ZIP from {local_dir} → {zip_name}")
-        tmp_dir = Path(tempfile.gettempdir())
-        tmp_zip = tmp_dir / f"xnatio_{zip_name}"
-        # Create zip
-        with zipfile.ZipFile(
-            tmp_zip, mode="w", compression=zipfile.ZIP_DEFLATED, allowZip64=True
-        ) as zf:
-            for path in sorted(local_dir.rglob("*")):
-                if not path.is_file():
-                    continue
-                rel = path.relative_to(local_dir).as_posix()
-                zf.write(path, arcname=rel)
+        log.info(f"Creating ZIP from {local_dir} → {remote_zip_name}")
+
+        # Use shared utility for zip creation
+        tmp_zip = zip_dir_to_temp(local_dir)
         size_mb = tmp_zip.stat().st_size / (1024 * 1024)
         log.info(f"ZIP ready ({size_mb:.1f} MB). Uploading once with extract=true...")
 
         try:
-            with open(tmp_zip, "rb") as f:
-                r = self.interface.put(
-                    url,
-                    data=f,
-                    headers={"Content-Type": "application/zip"},
-                    timeout=self.http_timeouts,
-                )
-            r.raise_for_status()
-            log.info(f"Extract upload OK ({r.status_code})")
+
+            def _do_upload() -> None:
+                with open(tmp_zip, "rb") as f:
+                    r = self.interface.put(
+                        url,
+                        data=f,
+                        headers={"Content-Type": "application/zip"},
+                        timeout=self.http_timeouts,
+                    )
+                r.raise_for_status()
+                log.info(f"Extract upload OK ({r.status_code})")
+
+            _retry_on_network_error(_do_upload, logger=log)
         finally:
             try:
                 tmp_zip.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f"Failed to remove temp zip {tmp_zip}: {e}")
 
     def _download_stream(self, url: str, out_path: Path) -> None:
         """Stream a URL to a local file using the client's HTTP session.
@@ -480,8 +544,9 @@ class XNATClient:
         )
         try:
             labels = sess.resources().get("label")
-        except Exception:
+        except Exception as e:
             # Fallback if label accessor is not supported; fetch all and extract names
+            self.log.debug(f"Could not get resource labels, falling back: {e}")
             labels = [r for r in (sess.resources().get() or [])]
         base = f"/data/projects/{project}/subjects/{subject}/experiments/{session}"
         # 2) download each resource
@@ -643,7 +708,12 @@ class XNATClient:
         log.info(f"File upload OK ({r.status_code})")
 
     def refresh_project_experiment_catalogs(
-        self, project: str, options: Optional[list[str]] = None
+        self,
+        project: str,
+        options: Optional[list[str]] = None,
+        *,
+        parallel: bool = False,
+        max_workers: int = 4,
     ) -> list[str]:
         """Refresh catalogs for all experiments in a project.
 
@@ -659,6 +729,15 @@ class XNATClient:
             Optional refresh options (e.g., ``checksum``, ``delete``,
             ``append``, ``populateStats``). Multiple entries are sent as a
             comma-separated ``options`` query parameter.
+        parallel: bool
+            If True, refresh experiments in parallel using threads.
+        max_workers: int
+            Maximum number of parallel workers (default 4).
+
+        Returns
+        -------
+        list[str]
+            List of experiment IDs that were successfully refreshed.
         """
 
         # Fetch experiment + subject mapping for the project
@@ -693,25 +772,47 @@ class XNATClient:
             if cleaned:
                 options_param = ",".join(dict.fromkeys(cleaned))
 
-        refreshed: list[str] = []
-        for subject_id, exp_id in experiments:
+        def _refresh_one(subject_exp: tuple[str, str]) -> Optional[str]:
+            """Refresh catalog for a single experiment."""
+            subject_id, exp_id = subject_exp
             resource_path = (
                 f"/archive/projects/{project}/subjects/{subject_id}/experiments/{exp_id}"
             )
-            params = {"resource": resource_path}
+            params: Dict[str, str] = {"resource": resource_path}
             if options_param:
                 params["options"] = options_param
 
-            r = self.interface.post(
-                "/data/services/refresh/catalog",
-                params=params,
-                timeout=self.http_timeouts,
-            )
-            r.raise_for_status()
-            self.log.info(
-                f"Refreshed catalog for experiment {exp_id} (subject {subject_id})"
-            )
-            refreshed.append(exp_id)
+            try:
+
+                def _do_refresh() -> None:
+                    r = self.interface.post(
+                        "/data/services/refresh/catalog",
+                        params=params,
+                        timeout=self.http_timeouts,
+                    )
+                    r.raise_for_status()
+
+                _retry_on_network_error(_do_refresh, logger=self.log)
+                self.log.info(
+                    f"Refreshed catalog for experiment {exp_id} (subject {subject_id})"
+                )
+                return exp_id
+            except Exception as e:
+                self.log.error(f"Failed to refresh catalog for {exp_id}: {e}")
+                return None
+
+        refreshed: list[str] = []
+        if parallel and len(experiments) > 1:
+            worker_count = max(1, min(max_workers, len(experiments)))
+            with ThreadPoolExecutor(max_workers=worker_count) as ex:
+                for result in ex.map(_refresh_one, experiments):
+                    if result:
+                        refreshed.append(result)
+        else:
+            for exp in experiments:
+                result = _refresh_one(exp)
+                if result:
+                    refreshed.append(result)
 
         return refreshed
 
@@ -737,14 +838,15 @@ class XNATClient:
                 candidate = [str(i) for i in raw_ids]
                 if all(s.isdigit() for s in candidate):
                     ids = candidate
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug(f"Could not get scan IDs by 'ID' column: {e}")
 
         # Fallback: parse from generic listing
         if not ids:
             try:
                 raw_list = scans_coll.get() or []
-            except Exception:
+            except Exception as e:
+                self.log.debug(f"Could not get scans list: {e}")
                 raw_list = []
             extracted: list[str] = []
             for entry in raw_list:
