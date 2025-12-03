@@ -30,6 +30,12 @@ dependencies = [
     "requests>=2.31.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
 [project.scripts]
 xnatio = "xnatio.cli:run_cli"
 xio = "xnatio.cli:run_cli"
